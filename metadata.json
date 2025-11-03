@@ -1,0 +1,5 @@
+{
+  "name": "Meal Planner Assistant",
+  "description": "An intelligent meal planning application that helps users decide what to eat based on their dietary goals, budget, and preferences. It automates meal decisions, tracks nutrition, and provides personalized recommendations to save time and reduce decision fatigue, embodying the FIRE philosophy.",
+  "requestFramePermissions": []
+}
