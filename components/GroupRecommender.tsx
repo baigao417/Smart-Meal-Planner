@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { UserProfile, Dish, GroupParticipant, MealRecommendation } from '../types';
-import { geminiService } from '../services/geminiService';
+import { siliconflowService } from '../services/siliconflowService';
 import RecommendationCard from './RecommendationCard';
 import { UserGroupIcon, ArrowPathIcon } from './Icons';
 
@@ -29,7 +29,7 @@ async function findBestGroupMeal(participants: {user: UserProfile, weight: numbe
         totalPrice: candidates.reduce((sum, d) => sum + d.price, 0)
     };
 
-    const reasoning = await geminiService.generateGroupRecommendationText(meal, participants);
+    const reasoning = await siliconflowService.generateGroupRecommendationText(meal, participants);
 
     return {
         ...meal,
