@@ -1,8 +1,19 @@
 import { Dish, Macros, UserProfile } from '../types';
 
+type VisionContentPart =
+  | string
+  | {
+      type: 'text' | 'input_text';
+      text: string;
+    }
+  | {
+      type: 'image_url';
+      image_url: { url: string };
+    };
+
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: VisionContentPart | VisionContentPart[];
 };
 
 type ProxyPayload = {
@@ -149,9 +160,14 @@ class SiliconFlowService {
     return content ?? '这份餐单营养均衡、执行难度低，能帮你节省选餐时间，把精力留给更重要的目标。';
   }
 
-  async generateGroupRecommendationText(meal: { dishes: Dish[] }, participants: { user: UserProfile; weight: number }[]): Promise<string> {
+  async generateGroupRecommendationText(
+    meal: { dishes: Dish[] },
+    participants: { user: UserProfile; weight: number }[]
+  ): Promise<string> {
     const dishList = meal.dishes.map(d => `${d.name}（${d.restaurant}）`).join('、');
-    const participantSummary = participants.map(p => `- ${p.user.name}：权重${p.weight}，目标${p.user.dietGoal}，偏好${p.user.preferences}`).join('\n');
+    const participantSummary = participants
+      .map(p => `- ${p.user.name}：权重${p.weight}，目标${p.user.dietGoal}，偏好${p.user.preferences || '未填写'}`)
+      .join('\n');
 
     const content = await this.requestContent({
       temperature: 0.6,
@@ -281,6 +297,44 @@ class SiliconFlowService {
       console.error('Failed to parse dish list:', error);
       throw new Error('AI解析失败，请检查文件格式或稍后重试。');
     }
+  }
+
+  async ocrImagesToText(imageDataUrls: string[]): Promise<string> {
+    if (imageDataUrls.length === 0) {
+      return '';
+    }
+
+    const contentBlocks: VisionContentPart[] = [
+      {
+        type: 'text',
+        text: '以下是餐单的截图，请逐页识别菜品名称、价格和餐厅信息，用换行分隔每道菜，若识别失败请标注未识别。',
+      },
+    ];
+
+    imageDataUrls.forEach((url, index) => {
+      contentBlocks.push({ type: 'text', text: `第${index + 1}页：` });
+      contentBlocks.push({ type: 'image_url', image_url: { url } });
+    });
+
+    const content = await this.requestContent({
+      model: 'deepseek-ai/Janus-Pro-7B',
+      temperature: 0.1,
+      maxTokens: 900,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是DeepSeek的OCR整理助手，请提取截图中的中文菜单文本。尽量保持原有顺序并输出干净的纯文本，每道菜独占一行。',
+        },
+        {
+          role: 'user',
+          content: contentBlocks,
+        },
+      ],
+      stop: ['```'],
+    });
+
+    return content?.trim() ?? '';
   }
 }
 

@@ -3,16 +3,30 @@ import { Dish, DishCategory } from '../types';
 import { siliconflowService } from '../services/siliconflowService';
 import { ArrowPathIcon, SparklesIcon } from './Icons';
 
-type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf');
+type PdfPageProxy = {
+  getTextContent: (params?: { disableCombineTextItems?: boolean }) => Promise<{ items: unknown[] }>;
+  getViewport: (params: { scale: number }) => { width: number; height: number };
+  render: (params: any) => { promise: Promise<void> };
+};
+
+type PdfDocumentProxy = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<PdfPageProxy>;
+};
+
+type PdfJsModule = {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (options: { data: Uint8Array }) => { promise: Promise<PdfDocumentProxy> };
+};
 
 let pdfModulePromise: Promise<PdfJsModule> | null = null;
 
 async function loadPdfModule(): Promise<PdfJsModule> {
   if (!pdfModulePromise) {
-    pdfModulePromise = import('pdfjs-dist/legacy/build/pdf').then(async (module) => {
-      const pdfjs = module;
+    pdfModulePromise = import('pdfjs-dist/legacy/build/pdf.js').then(async (module) => {
+      const pdfjs = module as unknown as PdfJsModule;
       try {
-        const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker?url');
+        const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.js?url');
         const workerSrc =
           (workerModule as { default?: string }).default ?? (workerModule as unknown as string);
         pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -210,16 +224,64 @@ async function getTextFromFile(file: File): Promise<string> {
                     let textContent = '';
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
-                        const text = await page.getTextContent();
+                        const text = await page.getTextContent({ disableCombineTextItems: false });
                         textContent += text.items
                             .map((item: any) => ('str' in item ? item.str : ''))
                             .join(' ');
                         textContent += '\n';
                     }
-                    resolve(textContent.trim());
+
+                    const trimmed = textContent.replace(/\s+\n/g, '\n').trim();
+                    if (trimmed.length > 20) {
+                        resolve(trimmed);
+                        return;
+                    }
+
+                    const imageDataUrls: string[] = [];
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const viewport = page.getViewport({ scale: 2 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        if (!context) {
+                            continue;
+                        }
+                        const outputScale = window.devicePixelRatio || 1;
+                        canvas.width = viewport.width * outputScale;
+                        canvas.height = viewport.height * outputScale;
+                        const renderContext: any = {
+                            canvasContext: context,
+                            viewport,
+                        };
+                        if (outputScale !== 1) {
+                            renderContext.transform = [outputScale, 0, 0, outputScale, 0, 0];
+                        }
+                        await page.render(renderContext).promise;
+                        imageDataUrls.push(canvas.toDataURL('image/png'));
+                        canvas.width = 0;
+                        canvas.height = 0;
+                    }
+
+                    if (imageDataUrls.length === 0) {
+                        if (trimmed) {
+                            return resolve(trimmed);
+                        }
+                        throw new Error('PDF appears to contain images only.');
+                    }
+
+                    const ocrText = await siliconflowService.ocrImagesToText(imageDataUrls);
+                    if (!ocrText.trim()) {
+                        throw new Error('DeepSeek OCR 未能识别该PDF，请尝试更清晰的扫描或上传文本版菜单。');
+                    }
+
+                    resolve(ocrText.trim());
                 } catch (err) {
                     console.error("PDF Parsing Error:", err);
-                    reject(new Error("Failed to parse PDF file. It might be corrupted or image-based."));
+                    if (err instanceof Error && err.message) {
+                        reject(err);
+                    } else {
+                        reject(new Error("Failed to parse PDF file. It might be corrupted or image-based."));
+                    }
                 }
             };
             reader.onerror = () => reject(new Error("Error reading PDF file."));

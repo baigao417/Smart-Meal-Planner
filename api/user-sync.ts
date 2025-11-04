@@ -10,7 +10,35 @@ interface SyncRequestBody {
 
 const KEY_PREFIX = process.env.MEAL_SYNC_PREFIX ?? 'meal-planner-sync';
 
-const isConfigured = () => Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+let availabilityCache: { value: boolean; expiresAt: number } | null = null;
+
+const hasKvEnv = () =>
+  Boolean(
+    process.env.KV_REST_API_URL &&
+      (process.env.KV_REST_API_TOKEN || process.env.KV_REST_API_READ_WRITE_TOKEN || process.env.KV_URL)
+  );
+
+async function ensureAvailability(): Promise<boolean> {
+  const now = Date.now();
+  if (availabilityCache && availabilityCache.expiresAt > now) {
+    return availabilityCache.value;
+  }
+
+  if (!hasKvEnv()) {
+    availabilityCache = { value: false, expiresAt: now + 60_000 };
+    return false;
+  }
+
+  try {
+    await kv.get('__kv_healthcheck__');
+    availabilityCache = { value: true, expiresAt: now + 60_000 };
+    return true;
+  } catch (error) {
+    console.error('Vercel KV availability check failed:', error);
+    availabilityCache = { value: false, expiresAt: now + 30_000 };
+    return false;
+  }
+}
 
 function createKey(userId: string) {
   return `${KEY_PREFIX}:${userId}`;
@@ -31,10 +59,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'GET' && typeof req.query.status !== 'undefined') {
-    return res.status(200).json({ available: isConfigured() });
+    const available = await ensureAvailability();
+    return res.status(200).json({ available });
   }
 
-  if (!isConfigured()) {
+  if (!(await ensureAvailability())) {
     return res.status(501).json({ message: 'Cloud sync is not configured. Please set KV_REST_API_URL and KV_REST_API_TOKEN.' });
   }
 

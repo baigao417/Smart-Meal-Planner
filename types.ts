@@ -48,6 +48,7 @@ export interface MealRecommendation {
 export interface GroupParticipant {
     userId: string;
     weight: number; // Weight for recommendation algorithm
+    customPreferences?: string;
 }
 
 export interface SyncedUserData {

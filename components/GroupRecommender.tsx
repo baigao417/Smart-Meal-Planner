@@ -12,7 +12,10 @@ interface GroupRecommenderProps {
 }
 
 // Simplified Group Recommendation Logic (client-side)
-async function findBestGroupMeal(participants: {user: UserProfile, weight: number}[], dishes: Dish[]): Promise<MealRecommendation | null> {
+async function findBestGroupMeal(
+  participants: { user: UserProfile; weight: number; customPreferences?: string }[],
+  dishes: Dish[]
+): Promise<MealRecommendation | null> {
     if (participants.length === 0 || dishes.length === 0) return null;
     
     // This is a simplified placeholder. A real implementation would involve a more complex algorithm.
@@ -29,7 +32,15 @@ async function findBestGroupMeal(participants: {user: UserProfile, weight: numbe
         totalPrice: candidates.reduce((sum, d) => sum + d.price, 0)
     };
 
-    const reasoning = await siliconflowService.generateGroupRecommendationText(meal, participants);
+    const reasoning = await siliconflowService.generateGroupRecommendationText(
+      meal,
+      participants.map(participant => ({
+        user: participant.customPreferences
+          ? { ...participant.user, preferences: participant.customPreferences }
+          : participant.user,
+        weight: participant.weight,
+      }))
+    );
 
     return {
         ...meal,
@@ -41,26 +52,42 @@ async function findBestGroupMeal(participants: {user: UserProfile, weight: numbe
 
 
 const GroupRecommender: React.FC<GroupRecommenderProps> = ({ allUsers, dishes, currentUser }) => {
-  const [participants, setParticipants] = useState<GroupParticipant[]>([{ userId: currentUser.id, weight: 1.0 }]);
+  const [participants, setParticipants] = useState<GroupParticipant[]>([
+    { userId: currentUser.id, weight: 1.0, customPreferences: currentUser.preferences ?? '' },
+  ]);
   const [recommendation, setRecommendation] = useState<MealRecommendation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   
   const handleParticipantChange = (index: number, userId: string) => {
+    const selectedUser = allUsers.find(u => u.id === userId);
     const newParticipants = [...participants];
-    newParticipants[index] = { ...newParticipants[index], userId };
+    newParticipants[index] = {
+      ...newParticipants[index],
+      userId,
+      customPreferences: selectedUser?.preferences ?? '',
+    };
     setParticipants(newParticipants);
   };
-  
+
   const handleWeightChange = (index: number, weight: number) => {
     const newParticipants = [...participants];
     newParticipants[index] = { ...newParticipants[index], weight: Math.max(0.1, weight) };
     setParticipants(newParticipants);
   };
 
+  const handlePreferenceChange = (index: number, preferences: string) => {
+    const newParticipants = [...participants];
+    newParticipants[index] = { ...newParticipants[index], customPreferences: preferences };
+    setParticipants(newParticipants);
+  };
+
   const addParticipant = () => {
     const availableUser = allUsers.find(u => !participants.some(p => p.userId === u.id));
     if (availableUser) {
-        setParticipants([...participants, { userId: availableUser.id, weight: 1.0 }]);
+        setParticipants([
+          ...participants,
+          { userId: availableUser.id, weight: 1.0, customPreferences: availableUser.preferences ?? '' },
+        ]);
     }
   };
 
@@ -73,10 +100,18 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({ allUsers, dishes, c
   const getRecommendation = useCallback(async () => {
     setIsLoading(true);
     setRecommendation(null);
-    const fullParticipants = participants.map(p => ({
-        user: allUsers.find(u => u.id === p.userId)!,
-        weight: p.weight
-    })).filter(p => p.user);
+    const fullParticipants = participants
+      .map(p => {
+        const user = allUsers.find(u => u.id === p.userId);
+        if (!user) return null;
+        const override = p.customPreferences?.trim();
+        return {
+          user: override ? { ...user, preferences: override } : user,
+          weight: p.weight,
+          customPreferences: override,
+        };
+      })
+      .filter((p): p is { user: UserProfile; weight: number; customPreferences?: string } => Boolean(p));
 
     const result = await findBestGroupMeal(fullParticipants, dishes);
     setRecommendation(result);
@@ -96,15 +131,24 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({ allUsers, dishes, c
         <h3 className="font-bold text-xl mb-4 text-gray-800">Plan Your Group Meal</h3>
         <div className="space-y-4">
             {participants.map((p, index) => (
-                <div key={index} className="flex flex-col sm:flex-row items-center gap-4 p-3 bg-gray-50 rounded-lg">
-                    <select value={p.userId} onChange={(e) => handleParticipantChange(index, e.target.value)} className="w-full sm:w-1/2 p-2 border border-gray-300 rounded-md bg-white">
-                        {allUsers.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
-                    </select>
-                    <div className="flex items-center w-full sm:w-1/2">
-                        <label className="text-sm mr-2 text-gray-600">Weight:</label>
-                        <input type="number" value={p.weight} onChange={e => handleWeightChange(index, parseFloat(e.target.value))} min="0.1" step="0.1" className="w-20 p-2 border border-gray-300 rounded-md"/>
-                        <button onClick={() => removeParticipant(index)} className="ml-auto text-gray-500 hover:text-red-600 p-2">&times;</button>
+                <div key={index} className="flex flex-col gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <select value={p.userId} onChange={(e) => handleParticipantChange(index, e.target.value)} className="w-full sm:w-1/2 p-2 border border-gray-300 rounded-md bg-white">
+                            {allUsers.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
+                        </select>
+                        <div className="flex items-center w-full sm:w-1/2">
+                            <label className="text-sm mr-2 text-gray-600">Weight:</label>
+                            <input type="number" value={p.weight} onChange={e => handleWeightChange(index, parseFloat(e.target.value))} min="0.1" step="0.1" className="w-20 p-2 border border-gray-300 rounded-md"/>
+                            <button onClick={() => removeParticipant(index)} className="ml-auto text-gray-500 hover:text-red-600 p-2" aria-label="Remove participant">&times;</button>
+                        </div>
                     </div>
+                    <textarea
+                      value={p.customPreferences ?? ''}
+                      onChange={e => handlePreferenceChange(index, e.target.value)}
+                      className="w-full p-2 border border-dashed border-indigo-300 rounded-md bg-white text-sm text-gray-700"
+                      placeholder="Add this person's preferences, restrictions, or must-have dishes so AI can balance the menu."
+                      rows={2}
+                    />
                 </div>
             ))}
         </div>
