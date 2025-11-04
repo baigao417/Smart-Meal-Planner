@@ -6,10 +6,19 @@ interface UserProfileSetupProps {
   onSave: (profile: UserProfile) => void;
   currentUser: UserProfile | null;
   cloudSyncAvailable?: boolean;
+  cloudSyncProvider?: 'vercel-kv' | 'webdav';
+  cloudSyncHint?: string | null;
   syncError?: string | null;
 }
 
-const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser, cloudSyncAvailable = true, syncError }) => {
+const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
+  onSave,
+  currentUser,
+  cloudSyncAvailable = true,
+  cloudSyncProvider,
+  cloudSyncHint,
+  syncError,
+}) => {
   const [profile, setProfile] = useState<UserProfile>(
     currentUser || {
       id: currentUser?.id || `user-${Date.now()}`,
@@ -183,7 +192,9 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser
               <span className="text-sm text-gray-700">
                 <span className="font-semibold block">Enable secure cloud sync</span>
                 {cloudSyncAvailable
-                  ? 'Changes will back up automatically when this is enabled.'
+                  ? cloudSyncProvider === 'webdav'
+                    ? 'Changes will back up to the configured WebDAV storage (e.g., OneDrive, Nextcloud).' 
+                    : 'Changes will back up automatically when this is enabled.'
                   : 'Cloud sync is not available on this deployment yet.'}
               </span>
             </label>
@@ -193,9 +204,37 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser
               Cloud sync is currently unavailable. Disable sync or contact the administrator.
             </p>
           )}
+          {cloudSyncHint && (
+            <p className="text-xs text-amber-600 mt-2 whitespace-pre-line">{cloudSyncHint}</p>
+          )}
           {profile.syncEnabled && syncError && (
             <p className="text-sm text-amber-600 mt-3">{syncError}</p>
           )}
+          <div className="mt-4 space-y-2 text-xs text-gray-500 bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4">
+            <p className="font-semibold text-gray-700">Deploy tips</p>
+            {cloudSyncAvailable && cloudSyncProvider === 'vercel-kv' && (
+              <p>Sync is using Vercel KV. Ensure the KV integration remains connected so backups stay up to date.</p>
+            )}
+            {cloudSyncAvailable && cloudSyncProvider === 'webdav' && (
+              <p>
+                Sync is using a WebDAV endpoint. You can point it at services like OneDrive (using the WebDAV URL
+                <code className="px-1 py-0.5 bg-gray-200 rounded ml-1 mr-1">https://d.docs.live.net/&lt;cid&gt;/Documents</code>) or Nextcloud.
+              </p>
+            )}
+            {!cloudSyncAvailable && (
+              <ul className="list-disc list-inside space-y-1">
+                <li>
+                  Enable <span className="font-medium">Vercel KV</span> and set <code className="px-1 py-0.5 bg-gray-200 rounded">KV_REST_API_URL</code> and
+                  <code className="px-1 py-0.5 bg-gray-200 rounded ml-1">KV_REST_API_TOKEN</code> in your deployment.
+                </li>
+                <li>
+                  Or add WebDAV credentials via <code className="px-1 py-0.5 bg-gray-200 rounded">WEBDAV_BASE_URL</code>,
+                  <code className="px-1 py-0.5 bg-gray-200 rounded ml-1">WEBDAV_USERNAME</code>, and
+                  <code className="px-1 py-0.5 bg-gray-200 rounded ml-1">WEBDAV_PASSWORD</code> to sync with services such as OneDrive or NAS.
+                </li>
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end">

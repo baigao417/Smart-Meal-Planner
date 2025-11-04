@@ -244,11 +244,22 @@ class SiliconFlowService {
       messages: [
         {
           role: 'system',
-          content: '你是智能菜谱整理助手，需要从文本中提取菜品信息，并估算价格与营养。请务必使用JSON数组返回。',
+          content:
+            '你是智能菜谱整理助手，需要从文本中提取菜品信息，并估算价格与营养。务必输出JSON数组，不允许出现额外说明。',
         },
         {
           role: 'user',
-          content: `请解析以下文本，列出每道菜的名称、餐厅、估算价格（人民币）、蛋白质/碳水/脂肪（克）以及分类（主食/肉蛋/蔬菜/汤羹/其他）。\n文本：\n${text}`,
+          content:
+            '示例文本：\n烤鸡胸, 健身餐厅, 26, 38, 6, 8, 肉蛋\n牛肉粉丝汤|一食堂|18|22|28|9|汤羹\n\n请将其转换为JSON数组。',
+        },
+        {
+          role: 'assistant',
+          content:
+            '[{"name":"烤鸡胸","restaurant":"健身餐厅","price":26,"protein":38,"carbs":6,"fat":8,"category":"肉蛋"},{"name":"牛肉粉丝汤","restaurant":"一食堂","price":18,"protein":22,"carbs":28,"fat":9,"category":"汤羹"}]',
+        },
+        {
+          role: 'user',
+          content: `请解析以下文本，列出每道菜的名称、餐厅、估算价格（人民币）、蛋白质/碳水/脂肪（克）以及分类（主食/肉蛋/蔬菜/汤羹/其他）。如遇无法识别的字段请合理估算。\n文本：\n${text}`,
         },
       ],
       responseFormat: {

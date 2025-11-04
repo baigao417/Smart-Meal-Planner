@@ -57,3 +57,11 @@ export interface SyncedUserData {
   allUsers: UserProfile[];
   updatedAt: string;
 }
+
+export type CloudSyncProvider = 'vercel-kv' | 'webdav';
+
+export interface CloudSyncStatus {
+  available: boolean;
+  provider?: CloudSyncProvider;
+  hint?: string;
+}

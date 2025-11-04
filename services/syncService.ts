@@ -1,4 +1,4 @@
-import { Dish, SyncedUserData, UserProfile } from '../types';
+import { CloudSyncStatus, Dish, SyncedUserData, UserProfile } from '../types';
 
 export type SyncPayload = {
   profile: UserProfile | null;
@@ -33,17 +33,24 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function checkAvailability(): Promise<boolean> {
+async function checkAvailability(): Promise<CloudSyncStatus> {
   try {
     const response = await fetch('/api/user-sync?status=1');
     if (!response.ok) {
-      return false;
+      return { available: false, hint: 'Cloud sync API returned an unexpected status.' };
     }
-    const data = (await response.json()) as { available?: boolean };
-    return Boolean(data?.available);
+    const data = (await response.json()) as Partial<CloudSyncStatus>;
+    return {
+      available: Boolean(data?.available),
+      provider: data?.provider,
+      hint: data?.hint,
+    };
   } catch (error) {
     console.error('Cloud sync availability check failed:', error);
-    return false;
+    return {
+      available: false,
+      hint: 'Unable to reach the sync API. Check your network or server logs.',
+    };
   }
 }
 

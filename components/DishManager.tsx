@@ -23,10 +23,12 @@ let pdfModulePromise: Promise<PdfJsModule> | null = null;
 
 async function loadPdfModule(): Promise<PdfJsModule> {
   if (!pdfModulePromise) {
-    pdfModulePromise = import('pdfjs-dist/legacy/build/pdf.js').then(async (module) => {
+    const pdfModulePath = 'pdfjs-dist/legacy/build/pdf.js';
+    pdfModulePromise = import(/* @vite-ignore */ pdfModulePath).then(async (module) => {
       const pdfjs = module as unknown as PdfJsModule;
       try {
-        const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.js?url');
+        const workerModulePath = 'pdfjs-dist/legacy/build/pdf.worker.js?url';
+        const workerModule = await import(/* @vite-ignore */ workerModulePath);
         const workerSrc =
           (workerModule as { default?: string }).default ?? (workerModule as unknown as string);
         pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -198,6 +200,143 @@ function waitForMammoth(timeout = 10000): Promise<void> {
     });
 }
 
+const ALLOWED_CATEGORIES: DishCategory[] = ['主食', '肉蛋', '蔬菜', '汤羹', '其他'];
+
+function parseStructuredDishText(rawText: string): Partial<Dish>[] {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !/^#/.test(line));
+
+  const results: Partial<Dish>[] = [];
+
+  for (const line of lines) {
+    const normalized = line.replace(/[，、；;\t]+/g, ',');
+    const parts = normalized
+      .split(/[,|]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    const fallbackParts = parts.length >= 4 ? parts : normalized.split(/\s+/).filter(Boolean);
+    if (fallbackParts.length < 3) {
+      continue;
+    }
+
+    const [name, restaurant, priceToken, proteinToken, carbsToken, fatToken, categoryToken] = fallbackParts;
+    const price = Number.parseFloat(priceToken);
+    if (Number.isNaN(price)) {
+      continue;
+    }
+
+    const protein = proteinToken ? Number.parseFloat(proteinToken) : NaN;
+    const carbs = carbsToken ? Number.parseFloat(carbsToken) : NaN;
+    const fat = fatToken ? Number.parseFloat(fatToken) : NaN;
+    const category = categoryToken && ALLOWED_CATEGORIES.includes(categoryToken as DishCategory)
+      ? (categoryToken as DishCategory)
+      : undefined;
+
+    results.push({
+      name,
+      restaurant,
+      price,
+      protein: Number.isNaN(protein) ? undefined : protein,
+      carbs: Number.isNaN(carbs) ? undefined : carbs,
+      fat: Number.isNaN(fat) ? undefined : fat,
+      category,
+    });
+  }
+
+  return results;
+}
+
+const ManualImportModal: React.FC<{
+  isOpen: boolean;
+  isBusy: boolean;
+  onClose: () => void;
+  onImport: (text: string) => Promise<void>;
+}> = ({ isOpen, isBusy, onClose, onImport }) => {
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!text.trim()) {
+      setError('请输入需要解析的内容。');
+      return;
+    }
+
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await onImport(text);
+      setText('');
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError((err as Error).message || '导入失败，请稍后重试。');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-30 p-4 safe-area-overlay">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-full overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-semibold text-gray-900">粘贴文本导入</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                支持直接粘贴 PDF/Word/Excel 的纯文本内容，也可以使用逗号或竖线分隔的结构化数据。
+              </p>
+            </div>
+            <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700">×</button>
+          </div>
+          <textarea
+            className="w-full h-48 border border-gray-300 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500"
+            placeholder={
+              '示例:\n烤鸡胸, 健身餐厅, 26, 38, 6, 8, 肉蛋\n西红柿鸡蛋面|校园食堂|15|16|52|9|主食\n\n也可以直接粘贴菜单原文，系统会尝试自动识别。'
+            }
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            disabled={isBusy || isSubmitting}
+          />
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex flex-wrap gap-2 text-xs text-gray-500 bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3">
+            <span className="font-semibold text-gray-700">快速格式提示：</span>
+            <span>菜名, 餐厅, 价格, 蛋白, 碳水, 脂肪, 分类</span>
+            <span>或</span>
+            <span>菜名 | 餐厅 | 价格 | 蛋白 | 碳水 | 脂肪 | 分类</span>
+            <span>分类可选：主食 / 肉蛋 / 蔬菜 / 汤羹 / 其他</span>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setText('')}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100"
+              disabled={isBusy || isSubmitting}
+            >
+              清空
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60"
+              disabled={isBusy || isSubmitting}
+            >
+              {isSubmitting || isBusy ? '导入中…' : '导入' }
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // Helper function to extract text from different file types
 async function getTextFromFile(file: File): Promise<string> {
     const reader = new FileReader();
@@ -317,7 +456,60 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDish, setEditingDish] = useState<Dish | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isManualImportOpen, setIsManualImportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const integrateImportedDishes = (parsedDishes: Partial<Dish>[], originLabel: string, structured: boolean) => {
+    const newDishes = parsedDishes
+      .map((parsedDish) => {
+        const category = ALLOWED_CATEGORIES.includes(parsedDish.category as DishCategory)
+          ? (parsedDish.category as DishCategory)
+          : '其他';
+        return {
+          id: `dish-${Date.now()}-${Math.random()}`,
+          name: parsedDish.name?.trim() || 'Unnamed Dish',
+          restaurant: parsedDish.restaurant?.trim() || 'Unknown Restaurant',
+          price: typeof parsedDish.price === 'number' && !Number.isNaN(parsedDish.price) ? parsedDish.price : 15,
+          protein: typeof parsedDish.protein === 'number' && !Number.isNaN(parsedDish.protein) ? parsedDish.protein : 20,
+          carbs: typeof parsedDish.carbs === 'number' && !Number.isNaN(parsedDish.carbs) ? parsedDish.carbs : 30,
+          fat: typeof parsedDish.fat === 'number' && !Number.isNaN(parsedDish.fat) ? parsedDish.fat : 15,
+          rating: 3,
+          category,
+        } as Dish;
+      })
+      .filter((newDish) =>
+        !dishes.some(
+          (existingDish) =>
+            existingDish.name.toLowerCase() === newDish.name.toLowerCase() &&
+            existingDish.restaurant.toLowerCase() === newDish.restaurant.toLowerCase()
+        )
+      );
+
+    if (newDishes.length > 0) {
+      setDishes((prev) => [...prev, ...newDishes]);
+      alert(
+        `成功导入 ${newDishes.length} 道新菜品，来源：${originLabel}${structured ? '（结构化解析）' : ''}`
+      );
+    } else {
+      alert('没有检测到新的菜品，可能已经存在列表中。');
+    }
+  };
+
+  const importDishesFromText = async (rawText: string, originLabel: string) => {
+    const cleaned = rawText.replace(/\uFEFF/g, '').trim();
+    if (!cleaned) {
+      throw new Error('内容为空，无法解析。');
+    }
+
+    const structured = parseStructuredDishText(cleaned);
+    if (structured.length > 0) {
+      integrateImportedDishes(structured, originLabel, true);
+      return;
+    }
+
+    const parsedDishes = await siliconflowService.parseDishesFromText(cleaned);
+    integrateImportedDishes(parsedDishes, originLabel, false);
+  };
 
   const handleAdd = () => {
     setEditingDish(null);
@@ -349,6 +541,10 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
     fileInputRef.current?.click();
   };
 
+  const handleManualImport = () => {
+    setIsManualImportOpen(true);
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -359,39 +555,7 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
         const allTexts = await Promise.all(fileReadPromises);
         const combinedText = allTexts.join('\n\n--- MEAL DATA SEPARATOR ---\n\n');
 
-        if (!combinedText.trim()) {
-            alert("Files are empty or contain no readable text.");
-            return;
-        }
-
-        const parsedDishes = await siliconflowService.parseDishesFromText(combinedText);
-        
-        const newDishes = parsedDishes
-            .map(parsedDish => ({
-                id: `dish-${Date.now()}-${Math.random()}`,
-                name: parsedDish.name || 'Unnamed Dish',
-                restaurant: parsedDish.restaurant || 'Unknown Restaurant',
-                price: parsedDish.price || 15,
-                protein: parsedDish.protein || 20,
-                carbs: parsedDish.carbs || 30,
-                fat: parsedDish.fat || 15,
-                rating: 3,
-                category: parsedDish.category || '其他',
-            } as Dish))
-            .filter(newDish => 
-                !dishes.some(existingDish => 
-                    existingDish.name.toLowerCase() === newDish.name.toLowerCase() && 
-                    existingDish.restaurant.toLowerCase() === newDish.restaurant.toLowerCase()
-                )
-            );
-
-        if (newDishes.length > 0) {
-            setDishes(prev => [...prev, ...newDishes]);
-            alert(`Successfully imported ${newDishes.length} new dishes from ${files.length} file(s)!`);
-        } else {
-            alert("No new dishes found to import. They might already be in your list.");
-        }
-
+        await importDishesFromText(combinedText, `${files.length} 个文件`);
     } catch (error) {
         console.error(error);
         alert((error as Error).message || "An error occurred during import.");
@@ -423,6 +587,13 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
                 className="flex items-center justify-center px-4 py-3 bg-white text-indigo-600 border border-indigo-600 font-semibold rounded-lg shadow-sm hover:bg-indigo-50 transition duration-300 disabled:opacity-50 disabled:cursor-wait"
             >
                 {isImporting ? <ArrowPathIcon className="w-5 h-5 animate-spin" /> : 'Import from File'}
+            </button>
+            <button
+                onClick={handleManualImport}
+                disabled={isImporting}
+                className="px-4 py-3 bg-white text-gray-700 border border-gray-300 font-semibold rounded-lg shadow-sm hover:bg-gray-100 transition duration-300 disabled:opacity-50"
+            >
+                Paste Text
             </button>
             <button onClick={handleAdd} className="px-5 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">
               Add New Dish
@@ -462,6 +633,19 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
       </div>
 
       {isFormOpen && <DishForm onSave={handleSave} onCancel={() => setIsFormOpen(false)} currentDish={editingDish} />}
+      <ManualImportModal
+        isOpen={isManualImportOpen}
+        isBusy={isImporting}
+        onClose={() => setIsManualImportOpen(false)}
+        onImport={async (text) => {
+          setIsImporting(true);
+          try {
+            await importDishesFromText(text, '手动粘贴');
+          } finally {
+            setIsImporting(false);
+          }
+        }}
+      />
     </div>
   );
 };
