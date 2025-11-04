@@ -1,6 +1,6 @@
 import { UserProfile, Dish, Macros, MealRecommendation } from '../types';
 import { MACRO_CONFIG, SATISFACTION_WEIGHTS, MIN_SATISFACTION_SCORE } from '../constants';
-import { geminiService } from '../services/geminiService';
+import { siliconflowService } from '../services/siliconflowService';
 
 function calculateTargetMacros(profile: UserProfile): Macros {
   const config = MACRO_CONFIG[profile.dietGoal];
@@ -92,7 +92,7 @@ export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promis
   
   if (mealCandidates.length === 0) return null;
 
-  const preferenceScores = await geminiService.getBulkPreferenceScores(mealCandidates, profile);
+  const preferenceScores = await siliconflowService.getBulkPreferenceScores(mealCandidates, profile);
 
   const scoredCandidates = mealCandidates.map((meal, index) => {
     const mealMacros: Macros = meal.reduce((acc, dish) => ({
@@ -130,7 +130,7 @@ export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promis
   validRecommendations.sort((a, b) => b.satisfactionScore - a.satisfactionScore);
   const bestMeal = validRecommendations[0];
   
-  const reasoning = await geminiService.generateRecommendationText(bestMeal, profile);
+  const reasoning = await siliconflowService.generateRecommendationText(bestMeal, profile);
 
   return { ...bestMeal, reasoning };
 }
