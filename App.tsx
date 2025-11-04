@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const hasCompletedInitialSync = useRef(false);
+  const initialSyncInFlight = useRef(false);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // After the first render where we might have used sampleDishes, mark the seeded flag as true.
@@ -75,6 +76,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!profile?.syncEnabled || !profile.email) {
       hasCompletedInitialSync.current = false;
+      initialSyncInFlight.current = false;
       setLastSyncedAt(null);
       return;
     }
@@ -83,7 +85,13 @@ const App: React.FC = () => {
       return;
     }
 
+    if (initialSyncInFlight.current) {
+      return;
+    }
+
+    initialSyncInFlight.current = true;
     let cancelled = false;
+    let shouldSeedRemote = false;
     setIsSyncing(true);
     setSyncError(null);
 
@@ -91,6 +99,7 @@ const App: React.FC = () => {
       .pull(profile.email)
       .then((remoteData) => {
         if (cancelled || !remoteData) {
+          shouldSeedRemote = !remoteData;
           return;
         }
         if (remoteData.profile !== undefined) {
@@ -112,14 +121,46 @@ const App: React.FC = () => {
         setSyncError(error instanceof Error ? error.message : 'Failed to restore cloud data.');
       })
       .finally(() => {
-        if (!cancelled) {
+        if (cancelled) {
+          return;
+        }
+
+        if (shouldSeedRemote) {
+          syncService
+            .push(profile.email as string, {
+              profile,
+              dishes,
+              allUsers,
+            })
+            .then((remoteData) => {
+              if (cancelled) return;
+              setSyncError(null);
+              setLastSyncedAt(remoteData.updatedAt);
+            })
+            .catch((error: unknown) => {
+              if (cancelled) return;
+              if (error instanceof SyncServiceError && error.code === 'CONFIGURATION') {
+                setCloudSyncAvailable(false);
+              }
+              setSyncError(error instanceof Error ? error.message : 'Unable to save changes to the cloud.');
+            })
+            .finally(() => {
+              if (!cancelled) {
+                hasCompletedInitialSync.current = true;
+                initialSyncInFlight.current = false;
+                setIsSyncing(false);
+              }
+            });
+        } else {
           hasCompletedInitialSync.current = true;
+          initialSyncInFlight.current = false;
           setIsSyncing(false);
         }
       });
 
     return () => {
       cancelled = true;
+      initialSyncInFlight.current = false;
     };
   }, [profile?.syncEnabled, profile?.email, cloudSyncAvailable, setProfile, setDishes, setAllUsers]);
 
@@ -224,7 +265,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="min-h-[100dvh] lg:flex">
       {/* Sidebar for desktop */}
       <aside className="hidden lg:block w-64 bg-white border-r border-gray-200 flex-shrink-0">
         <div className="h-full flex flex-col">
@@ -240,7 +281,10 @@ const App: React.FC = () => {
       <main className="flex-1">
         {/* Header for mobile */}
         {profile && (
-            <header className="lg:hidden bg-white border-b border-gray-200 p-4 flex justify-between items-center sticky top-0 z-10 safe-area-top">
+            <header
+              className="lg:hidden bg-white border-b border-gray-200 p-4 flex justify-between items-center sticky z-10 safe-area-top"
+              style={{ top: 'var(--safe-area-top)' }}
+            >
                  <div className="flex items-center space-x-3">
                     <FireIcon className="w-7 h-7 text-indigo-600" />
                     <h1 className="text-lg font-bold text-gray-800">Meal Planner</h1>
@@ -258,7 +302,7 @@ const App: React.FC = () => {
             </div>
         )}
         
-        <div className="p-4 sm:p-6 lg:p-8 space-y-4">
+        <div className="p-4 sm:p-6 lg:p-8 space-y-4 pb-8">
             {profile?.syncEnabled && profile.email && (
               <div
                 className={`rounded-xl border ${

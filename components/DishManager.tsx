@@ -3,10 +3,34 @@ import { Dish, DishCategory } from '../types';
 import { siliconflowService } from '../services/siliconflowService';
 import { ArrowPathIcon, SparklesIcon } from './Icons';
 
+type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf');
+
+let pdfModulePromise: Promise<PdfJsModule> | null = null;
+
+async function loadPdfModule(): Promise<PdfJsModule> {
+  if (!pdfModulePromise) {
+    pdfModulePromise = import('pdfjs-dist/legacy/build/pdf').then(async (module) => {
+      const pdfjs = module;
+      try {
+        const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker?url');
+        const workerSrc =
+          (workerModule as { default?: string }).default ?? (workerModule as unknown as string);
+        pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+      } catch (error) {
+        console.warn('Falling back to CDN pdf.js worker after import error.', error);
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+      return pdfjs;
+    });
+  }
+
+  return pdfModulePromise;
+}
+
 // Declare global variables for libraries loaded from CDN
 declare global {
   interface Window {
-    pdfjsLib: any;
     mammoth: any;
   }
 }
@@ -68,7 +92,7 @@ const DishForm: React.FC<{ onSave: (dish: Dish) => void, onCancel: () => void, c
     const categories: DishCategory[] = ['主食', '肉蛋', '蔬菜', '汤羹', '其他'];
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20 p-4 safe-area-overlay">
             <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-lg max-h-full overflow-y-auto">
                 <h3 className="text-2xl font-bold text-gray-800 mb-6">{isEditing ? 'Edit Dish' : 'Add a New Dish'}</h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -140,18 +164,17 @@ const DishForm: React.FC<{ onSave: (dish: Dish) => void, onCancel: () => void, c
 };
 
 // Helper to wait for a global library to be available, preventing race conditions.
-function waitForLibrary(libraryName: 'pdfjsLib' | 'mammoth', timeout = 10000): Promise<void> {
+function waitForMammoth(timeout = 10000): Promise<void> {
     return new Promise((resolve, reject) => {
         let attempts = 0;
         const intervalTime = 100;
         const maxAttempts = timeout / intervalTime;
 
         const check = () => {
-            if (window[libraryName]) {
+            if (window.mammoth) {
                 resolve();
             } else if (attempts >= maxAttempts) {
-                const libDisplayName = libraryName === 'pdfjsLib' ? 'PDF' : 'Word';
-                reject(new Error(`${libDisplayName} library failed to load. Please check your internet connection or refresh the page.`));
+                reject(new Error('Word library failed to load. Please check your internet connection or refresh the page.'));
             } else {
                 attempts++;
                 setTimeout(check, intervalTime);
@@ -176,23 +199,24 @@ async function getTextFromFile(file: File): Promise<string> {
     }
 
     if (fileType === 'application/pdf' || fileName.endsWith('.pdf')) {
-        await waitForLibrary('pdfjsLib');
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
-        
+        const pdfjs = await loadPdfModule();
+
         return new Promise((resolve, reject) => {
             reader.onload = async (e) => {
                 try {
                     const arrayBuffer = e.target?.result as ArrayBuffer;
                     if (!arrayBuffer) return reject(new Error("Empty PDF file."));
-                    const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+                    const pdf = await pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
                     let textContent = '';
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
                         const text = await page.getTextContent();
-                        textContent += text.items.map((item: any) => item.str).join(' ');
+                        textContent += text.items
+                            .map((item: any) => ('str' in item ? item.str : ''))
+                            .join(' ');
                         textContent += '\n';
                     }
-                    resolve(textContent);
+                    resolve(textContent.trim());
                 } catch (err) {
                     console.error("PDF Parsing Error:", err);
                     reject(new Error("Failed to parse PDF file. It might be corrupted or image-based."));
@@ -204,7 +228,7 @@ async function getTextFromFile(file: File): Promise<string> {
     }
 
     if (fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || fileName.endsWith('.docx')) {
-        await waitForLibrary('mammoth');
+        await waitForMammoth();
 
         return new Promise((resolve, reject) => {
             reader.onload = async (e) => {

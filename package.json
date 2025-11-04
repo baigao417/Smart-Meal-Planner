@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@vercel/kv": "^3.0.0",
+    "pdfjs-dist": "^3.11.174",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "workbox-window": "^7.3.0"
