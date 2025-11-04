@@ -19,7 +19,7 @@ const LoadingSpinner: React.FC = () => (
 const NoResult: React.FC = () => (
     <div className="text-center bg-white p-8 rounded-2xl shadow-lg">
         <h3 className="text-2xl font-bold text-gray-800 mb-3">No suitable meal found!</h3>
-        <p className="text-gray-600 max-w-md mx-auto">We couldn't find a meal that meets the high satisfaction score (&gt;85) with your current settings.</p>
+        <p className="text-gray-600 max-w-md mx-auto">We couldn't find a meal that meets the high satisfaction score (&gt;70) with your current settings.</p>
         <div className="mt-6 text-left max-w-md mx-auto space-y-2 text-gray-500">
             <p>To improve your results, you could:</p>
             <ul className="list-disc list-inside space-y-1">

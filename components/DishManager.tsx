@@ -76,12 +76,25 @@ const DishForm: React.FC<{ onSave: (dish: Dish) => void, onCancel: () => void, c
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         const numericFields = ['price', 'protein', 'carbs', 'fat', 'rating'];
-        setDish(prev => ({ ...prev, [name]: numericFields.includes(name) ? parseFloat(value) : value }));
+        if (numericFields.includes(name)) {
+            const parsed = parseFloat(value);
+            if (name === 'price' && !Number.isNaN(parsed)) {
+                setDish((prev) => ({ ...prev, [name]: parseFloat(parsed.toFixed(2)) }));
+            } else {
+                setDish((prev) => ({ ...prev, [name]: parsed }));
+            }
+            return;
+        }
+
+        setDish(prev => ({ ...prev, [name]: value }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onSave(dish);
+        onSave({
+            ...dish,
+            price: Number.isFinite(dish.price) ? parseFloat(dish.price.toFixed(2)) : 0,
+        });
     };
 
     const handleEstimate = async () => {
@@ -142,7 +155,7 @@ const DishForm: React.FC<{ onSave: (dish: Dish) => void, onCancel: () => void, c
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Price (￥)</label>
-                            <input type="number" name="price" value={dish.price} onChange={handleChange} min="0" step="0.5" required className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <input type="number" name="price" value={dish.price} onChange={handleChange} min="0" step="0.01" required className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"/>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Protein (g)</label>
@@ -238,7 +251,7 @@ function parseStructuredDishText(rawText: string): Partial<Dish>[] {
     results.push({
       name,
       restaurant,
-      price,
+      price: parseFloat(price.toFixed(2)),
       protein: Number.isNaN(protein) ? undefined : protein,
       carbs: Number.isNaN(carbs) ? undefined : carbs,
       fat: Number.isNaN(fat) ? undefined : fat,
@@ -465,11 +478,15 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
         const category = ALLOWED_CATEGORIES.includes(parsedDish.category as DishCategory)
           ? (parsedDish.category as DishCategory)
           : '其他';
+        const price =
+          typeof parsedDish.price === 'number' && !Number.isNaN(parsedDish.price)
+            ? parseFloat(parsedDish.price.toFixed(2))
+            : 15;
         return {
           id: `dish-${Date.now()}-${Math.random()}`,
           name: parsedDish.name?.trim() || 'Unnamed Dish',
           restaurant: parsedDish.restaurant?.trim() || 'Unknown Restaurant',
-          price: typeof parsedDish.price === 'number' && !Number.isNaN(parsedDish.price) ? parsedDish.price : 15,
+          price,
           protein: typeof parsedDish.protein === 'number' && !Number.isNaN(parsedDish.protein) ? parsedDish.protein : 20,
           carbs: typeof parsedDish.carbs === 'number' && !Number.isNaN(parsedDish.carbs) ? parsedDish.carbs : 30,
           fat: typeof parsedDish.fat === 'number' && !Number.isNaN(parsedDish.fat) ? parsedDish.fat : 15,

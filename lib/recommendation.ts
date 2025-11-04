@@ -123,14 +123,23 @@ export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promis
     };
   });
 
-  const validRecommendations = scoredCandidates.filter(c => c.satisfactionScore >= MIN_SATISFACTION_SCORE);
+  const sortedCandidates = [...scoredCandidates].sort((a, b) => b.satisfactionScore - a.satisfactionScore);
+  if (sortedCandidates.length === 0) {
+    return null;
+  }
 
-  if (validRecommendations.length === 0) return null;
+  const bestMeal =
+    sortedCandidates.find((candidate) => candidate.satisfactionScore >= MIN_SATISFACTION_SCORE) ??
+    sortedCandidates[0];
 
-  validRecommendations.sort((a, b) => b.satisfactionScore - a.satisfactionScore);
-  const bestMeal = validRecommendations[0];
-  
+  const needsThresholdWarning = bestMeal.satisfactionScore < MIN_SATISFACTION_SCORE;
   const reasoning = await siliconflowService.generateRecommendationText(bestMeal, profile);
+  const warnings = needsThresholdWarning
+    ? [
+        ...bestMeal.warnings,
+        `当前组合的满意度约为 ${Math.round(bestMeal.satisfactionScore)}，低于建议阈值 ${MIN_SATISFACTION_SCORE}。可考虑增加预算或补充菜品。`,
+      ]
+    : bestMeal.warnings;
 
-  return { ...bestMeal, reasoning };
+  return { ...bestMeal, reasoning, warnings };
 }

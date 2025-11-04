@@ -13,7 +13,7 @@ export const SATISFACTION_WEIGHTS = {
   budget: 0.1,
 };
 
-export const MIN_SATISFACTION_SCORE = 85;
+export const MIN_SATISFACTION_SCORE = 70;
 
 export const sampleDishes: Dish[] = [
   { id: 'd1', name: 'Grilled Chicken Breast Salad', restaurant: 'Healthy Eats', price: 12.5, protein: 40, carbs: 10, fat: 15, rating: 9, category: '蔬菜' },

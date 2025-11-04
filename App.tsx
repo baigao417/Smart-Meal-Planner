@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { UserProfile, Dish, DietGoal, CloudSyncStatus } from './types';
 import useLocalStorage from './hooks/useLocalStorage';
 import UserProfileSetup from './components/UserProfileSetup';
@@ -8,6 +8,7 @@ import GroupRecommender from './components/GroupRecommender';
 import { sampleDishes, sampleUsers } from './constants';
 import { FireIcon, UserGroupIcon, Cog6ToothIcon, SparklesIcon, Bars3Icon, XMarkIcon, ArrowPathIcon } from './components/Icons';
 import { syncService, SyncServiceError } from './services/syncService';
+import { siliconflowService } from './services/siliconflowService';
 
 type View = 'recommender' | 'dishes' | 'group' | 'profile';
 
@@ -25,6 +26,8 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<{ available: boolean; message?: string; model?: string } | null>(null);
+  const [isCheckingAi, setIsCheckingAi] = useState(false);
   const hasCompletedInitialSync = useRef(false);
   const initialSyncInFlight = useRef(false);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,6 +44,22 @@ const App: React.FC = () => {
 
   const [view, setView] = useState<View>('recommender');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const refreshAiStatus = useCallback(() => {
+    setIsCheckingAi(true);
+    siliconflowService
+      .checkAvailability()
+      .then((status) => {
+        setAiStatus(status);
+      })
+      .finally(() => {
+        setIsCheckingAi(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    refreshAiStatus();
+  }, [refreshAiStatus]);
   
   const handleProfileSave = (newProfile: UserProfile) => {
     setProfile(newProfile);
@@ -372,6 +391,29 @@ const App: React.FC = () => {
               onChange={handleManualImport}
               style={{ display: 'none' }}
             />
+            {aiStatus && (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm flex items-center justify-between flex-wrap gap-2 ${
+                  aiStatus.available
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-amber-400 bg-amber-50 text-amber-800'
+                }`}
+              >
+                <span>
+                  {aiStatus.available
+                    ? `AI 服务已连接${aiStatus.model ? ` • 模型 ${aiStatus.model}` : ''}`
+                    : aiStatus.message || 'AI 服务不可用，请检查 Vercel 环境变量或代理配置。'}
+                </span>
+                <button
+                  type="button"
+                  onClick={refreshAiStatus}
+                  disabled={isCheckingAi}
+                  className="px-3 py-1 text-xs font-semibold rounded-lg border border-current"
+                >
+                  {isCheckingAi ? '检测中…' : '重新检测'}
+                </button>
+              </div>
+            )}
             {profile?.syncEnabled && profile.email && (
               <div
                 className={`rounded-xl border ${
