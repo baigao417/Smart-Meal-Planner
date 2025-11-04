@@ -17,6 +17,8 @@ export interface UserProfile {
   dietGoal: DietGoal;
   preferences: string; // e.g., "loves spicy, hates seafood"
   budget: number; // Daily budget
+  email?: string;
+  syncEnabled?: boolean;
 }
 
 export type DishCategory = '主食' | '肉蛋' | '蔬菜' | '汤羹' | '其他';
@@ -46,4 +48,11 @@ export interface MealRecommendation {
 export interface GroupParticipant {
     userId: string;
     weight: number; // Weight for recommendation algorithm
+}
+
+export interface SyncedUserData {
+  profile: UserProfile | null;
+  dishes: Dish[];
+  allUsers: UserProfile[];
+  updatedAt: string;
 }

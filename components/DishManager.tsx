@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Dish, DishCategory } from '../types';
-import { geminiService } from '../services/geminiService';
+import { siliconflowService } from '../services/siliconflowService';
 import { ArrowPathIcon, SparklesIcon } from './Icons';
 
 // Declare global variables for libraries loaded from CDN
@@ -51,7 +51,7 @@ const DishForm: React.FC<{ onSave: (dish: Dish) => void, onCancel: () => void, c
         }
         setIsEstimating(true);
         try {
-            const macros = await geminiService.estimateDishMacros(dish.name, dish.restaurant);
+            const macros = await siliconflowService.estimateDishMacros(dish.name, dish.restaurant);
             setDish(prev => ({
                 ...prev,
                 protein: Math.round(macros.protein),
@@ -184,7 +184,7 @@ async function getTextFromFile(file: File): Promise<string> {
                 try {
                     const arrayBuffer = e.target?.result as ArrayBuffer;
                     if (!arrayBuffer) return reject(new Error("Empty PDF file."));
-                    const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise;
+                    const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
                     let textContent = '';
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
@@ -278,7 +278,7 @@ const DishManager: React.FC<DishManagerProps> = ({ dishes, setDishes }) => {
             return;
         }
 
-        const parsedDishes = await geminiService.parseDishesFromText(combinedText);
+        const parsedDishes = await siliconflowService.parseDishesFromText(combinedText);
         
         const newDishes = parsedDishes
             .map(parsedDish => ({

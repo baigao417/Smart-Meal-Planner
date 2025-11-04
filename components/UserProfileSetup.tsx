@@ -5,9 +5,11 @@ import { UserProfile, DietGoal } from '../types';
 interface UserProfileSetupProps {
   onSave: (profile: UserProfile) => void;
   currentUser: UserProfile | null;
+  cloudSyncAvailable?: boolean;
+  syncError?: string | null;
 }
 
-const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser }) => {
+const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser, cloudSyncAvailable = true, syncError }) => {
   const [profile, setProfile] = useState<UserProfile>(
     currentUser || {
       id: currentUser?.id || `user-${Date.now()}`,
@@ -16,25 +18,57 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser
       dietGoal: DietGoal.MAINTENANCE,
       preferences: '',
       budget: 30,
+      email: '',
+      syncEnabled: false,
     }
   );
-  
+
   const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
-      setProfile(currentUser);
+      setProfile({
+        ...currentUser,
+        email: currentUser.email ?? '',
+        syncEnabled: currentUser.syncEnabled ?? false,
+      });
     }
   }, [currentUser]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setProfile(prev => ({ ...prev, [name]: name === 'weightKg' || name === 'budget' ? parseFloat(value) : value }));
+    if (name === 'weightKg' || name === 'budget') {
+      setProfile(prev => ({ ...prev, [name]: parseFloat(value) }));
+      return;
+    }
+    setProfile(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, checked } = e.target;
+    setProfile(prev => ({ ...prev, [name]: checked }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(profile);
+    const trimmedEmail = profile.email?.trim().toLowerCase();
+    if (profile.syncEnabled && !trimmedEmail) {
+      alert('Please enter an email address to enable cloud sync.');
+      return;
+    }
+
+    const nextProfile: UserProfile = {
+      ...profile,
+      email: trimmedEmail,
+      id: profile.syncEnabled && trimmedEmail ? trimmedEmail : profile.id || `user-${Date.now()}`,
+    };
+
+    if (!nextProfile.id) {
+      nextProfile.id = `user-${Date.now()}`;
+    }
+
+    onSave(nextProfile);
+    setProfile(nextProfile);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2000);
   };
@@ -117,6 +151,51 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({ onSave, currentUser
             placeholder="e.g., love spicy food, allergic to shellfish, avoid cilantro"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
           />
+        </div>
+
+        <div className="border-t border-gray-200 pt-6 mt-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">Cloud Sync</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Use the same email and enable sync to keep your meals and preferences consistent across devices.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                name="email"
+                id="email"
+                value={profile.email ?? ''}
+                onChange={handleChange}
+                placeholder="you@example.com"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
+              />
+            </div>
+            <label className="flex items-start space-x-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <input
+                type="checkbox"
+                name="syncEnabled"
+                checked={!!profile.syncEnabled}
+                onChange={handleCheckboxChange}
+                disabled={!cloudSyncAvailable}
+                className="mt-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+              />
+              <span className="text-sm text-gray-700">
+                <span className="font-semibold block">Enable secure cloud sync</span>
+                {cloudSyncAvailable
+                  ? 'Changes will back up automatically when this is enabled.'
+                  : 'Cloud sync is not available on this deployment yet.'}
+              </span>
+            </label>
+          </div>
+          {profile.syncEnabled && !cloudSyncAvailable && (
+            <p className="text-sm text-red-600 mt-3">
+              Cloud sync is currently unavailable. Disable sync or contact the administrator.
+            </p>
+          )}
+          {profile.syncEnabled && syncError && (
+            <p className="text-sm text-amber-600 mt-3">{syncError}</p>
+          )}
         </div>
 
         <div className="flex justify-end">

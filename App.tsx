@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { UserProfile, Dish, DietGoal } from './types';
 import useLocalStorage from './hooks/useLocalStorage';
 import UserProfileSetup from './components/UserProfileSetup';
@@ -6,7 +6,8 @@ import DailyRecommender from './components/DailyRecommender';
 import DishManager from './components/DishManager';
 import GroupRecommender from './components/GroupRecommender';
 import { sampleDishes, sampleUsers } from './constants';
-import { FireIcon, UserGroupIcon, Cog6ToothIcon, SparklesIcon, Bars3Icon, XMarkIcon } from './components/Icons';
+import { FireIcon, UserGroupIcon, Cog6ToothIcon, SparklesIcon, Bars3Icon, XMarkIcon, ArrowPathIcon } from './components/Icons';
+import { syncService, SyncServiceError } from './services/syncService';
 
 type View = 'recommender' | 'dishes' | 'group' | 'profile';
 
@@ -16,10 +17,16 @@ const App: React.FC = () => {
 
   const [profile, setProfile] = useLocalStorage<UserProfile | null>('user-profile', null);
   const [dishes, setDishes] = useLocalStorage<Dish[]>(
-    'user-dishes', 
+    'user-dishes',
     !dishesSeeded ? sampleDishes : [] // Only provide samples if not yet seeded
   );
   const [allUsers, setAllUsers] = useLocalStorage<UserProfile[]>('all-users', sampleUsers);
+  const [cloudSyncAvailable, setCloudSyncAvailable] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const hasCompletedInitialSync = useRef(false);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // After the first render where we might have used sampleDishes, mark the seeded flag as true.
   // This ensures sample dishes are only added once, and an empty list is respected on subsequent loads.
@@ -41,7 +48,121 @@ const App: React.FC = () => {
     } else {
         setAllUsers(prev => prev.map(u => u.id === newProfile.id ? newProfile : u));
     }
+    if (!newProfile.syncEnabled) {
+      hasCompletedInitialSync.current = false;
+      setSyncError(null);
+    }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    syncService.checkAvailability()
+      .then((available) => {
+        if (!cancelled) {
+          setCloudSyncAvailable(available);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCloudSyncAvailable(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!profile?.syncEnabled || !profile.email) {
+      hasCompletedInitialSync.current = false;
+      setLastSyncedAt(null);
+      return;
+    }
+
+    if (!cloudSyncAvailable || hasCompletedInitialSync.current) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsSyncing(true);
+    setSyncError(null);
+
+    syncService
+      .pull(profile.email)
+      .then((remoteData) => {
+        if (cancelled || !remoteData) {
+          return;
+        }
+        if (remoteData.profile !== undefined) {
+          setProfile(remoteData.profile);
+        }
+        if (Array.isArray(remoteData.dishes)) {
+          setDishes(remoteData.dishes);
+        }
+        if (Array.isArray(remoteData.allUsers)) {
+          setAllUsers(remoteData.allUsers);
+        }
+        setLastSyncedAt(remoteData.updatedAt ?? new Date().toISOString());
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (error instanceof SyncServiceError && error.code === 'CONFIGURATION') {
+          setCloudSyncAvailable(false);
+        }
+        setSyncError(error instanceof Error ? error.message : 'Failed to restore cloud data.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          hasCompletedInitialSync.current = true;
+          setIsSyncing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.syncEnabled, profile?.email, cloudSyncAvailable, setProfile, setDishes, setAllUsers]);
+
+  useEffect(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+
+    if (!profile?.syncEnabled || !profile.email || !cloudSyncAvailable || !hasCompletedInitialSync.current) {
+      return;
+    }
+
+    syncTimeoutRef.current = setTimeout(() => {
+      setIsSyncing(true);
+      syncService
+        .push(profile.email as string, {
+          profile,
+          dishes,
+          allUsers,
+        })
+        .then((remoteData) => {
+          setSyncError(null);
+          setLastSyncedAt(remoteData.updatedAt);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof SyncServiceError && error.code === 'CONFIGURATION') {
+            setCloudSyncAvailable(false);
+          }
+          setSyncError(error instanceof Error ? error.message : 'Unable to save changes to the cloud.');
+        })
+        .finally(() => {
+          setIsSyncing(false);
+        });
+    }, 800);
+
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+    };
+  }, [profile, dishes, allUsers, cloudSyncAvailable]);
 
   // Fix: Replaced JSX.Element with React.ReactElement to resolve "Cannot find namespace 'JSX'" error.
   // Fix: Specified props for the icon to allow cloning with className.
@@ -62,7 +183,14 @@ const App: React.FC = () => {
 
   const mainContent = useMemo(() => {
     if (!profile) {
-      return <UserProfileSetup onSave={handleProfileSave} currentUser={null} />;
+      return (
+        <UserProfileSetup
+          onSave={handleProfileSave}
+          currentUser={null}
+          cloudSyncAvailable={cloudSyncAvailable}
+          syncError={syncError}
+        />
+      );
     }
 
     switch (view) {
@@ -73,11 +201,18 @@ const App: React.FC = () => {
       case 'group':
         return <GroupRecommender allUsers={allUsers} dishes={dishes} currentUser={profile} />;
       case 'profile':
-        return <UserProfileSetup onSave={handleProfileSave} currentUser={profile} />;
+        return (
+          <UserProfileSetup
+            onSave={handleProfileSave}
+            currentUser={profile}
+            cloudSyncAvailable={cloudSyncAvailable}
+            syncError={syncError}
+          />
+        );
       default:
         return <DailyRecommender profile={profile} dishes={dishes} />;
     }
-  }, [view, profile, dishes, allUsers]);
+  }, [view, profile, dishes, allUsers, cloudSyncAvailable, syncError]);
 
   const navContent = (
     <nav className="p-4 space-y-2">
@@ -105,7 +240,7 @@ const App: React.FC = () => {
       <main className="flex-1">
         {/* Header for mobile */}
         {profile && (
-            <header className="lg:hidden bg-white border-b border-gray-200 p-4 flex justify-between items-center sticky top-0 z-10">
+            <header className="lg:hidden bg-white border-b border-gray-200 p-4 flex justify-between items-center sticky top-0 z-10 safe-area-top">
                  <div className="flex items-center space-x-3">
                     <FireIcon className="w-7 h-7 text-indigo-600" />
                     <h1 className="text-lg font-bold text-gray-800">Meal Planner</h1>
@@ -123,7 +258,33 @@ const App: React.FC = () => {
             </div>
         )}
         
-        <div className="p-4 sm:p-6 lg:p-8">
+        <div className="p-4 sm:p-6 lg:p-8 space-y-4">
+            {profile?.syncEnabled && profile.email && (
+              <div
+                className={`rounded-xl border ${
+                  !cloudSyncAvailable
+                    ? 'border-amber-400 bg-amber-50 text-amber-800'
+                    : syncError
+                    ? 'border-red-300 bg-red-50 text-red-700'
+                    : isSyncing
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                } px-4 py-3 text-sm flex items-center justify-between flex-wrap gap-2`}
+              >
+                <span>
+                  {!cloudSyncAvailable
+                    ? 'Cloud sync is not configured yet. Data is stored only on this device.'
+                    : syncError
+                    ? syncError
+                    : isSyncing
+                    ? 'Syncing your meals…'
+                    : lastSyncedAt
+                    ? `All changes synced • Updated ${new Date(lastSyncedAt).toLocaleString()}`
+                    : 'Cloud sync is ready.'}
+                </span>
+                {isSyncing && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+              </div>
+            )}
             {mainContent}
         </div>
       </main>
