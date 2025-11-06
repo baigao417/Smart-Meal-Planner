@@ -450,6 +450,44 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
                         .join(' | ')}
                     </p>
                   </div>
+                  {meal.participants.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-sm font-medium text-gray-700">参与成员</p>
+                      <ul className="space-y-2">
+                        {meal.participants.map((participant) => {
+                          const shareRatioValue =
+                            typeof participant.shareRatio === 'number' ? participant.shareRatio : null;
+                          const sharePercent =
+                            shareRatioValue !== null && Number.isFinite(shareRatioValue)
+                              ? Math.round(shareRatioValue * 100)
+                              : null;
+                          const hasScore =
+                            typeof participant.personalScore === 'number' &&
+                            Number.isFinite(participant.personalScore);
+                          const personalNote = participant.notes?.trim();
+                          return (
+                            <li
+                              key={participant.id}
+                              className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-semibold text-gray-900">{participant.name}</span>
+                                {sharePercent !== null && (
+                                  <span className="text-gray-500">分摊 {sharePercent}%</span>
+                                )}
+                              </div>
+                              {hasScore && (
+                                <p className="mt-1 text-gray-600">个人评分：{participant.personalScore}</p>
+                              )}
+                              {personalNote && (
+                                <p className="mt-1 text-gray-600">聚餐感受：{personalNote}</p>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
                   {meal.notes && <p className="text-sm text-gray-600 mt-2">备注：{meal.notes}</p>}
                 </div>
               ))}

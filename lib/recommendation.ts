@@ -293,7 +293,8 @@ export async function generateDailyPlan(
   mode: BudgetMode,
   mealsPerDay: number
 ): Promise<DailyPlanRecord> {
-  const normalizedMeals = Math.max(2, Math.min(5, mealsPerDay || 3));
+  const requestedMeals = Number.isFinite(mealsPerDay) ? Math.round(mealsPerDay) : 3;
+  const normalizedMeals = Math.max(1, Math.min(6, requestedMeals || 3));
   const labels = getSlotLabels(normalizedMeals);
   const weights = getSlotWeights(normalizedMeals);
   const multiplier = BUDGET_MODE_MULTIPLIER[mode] ?? 1;

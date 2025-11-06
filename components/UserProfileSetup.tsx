@@ -57,7 +57,13 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
       return;
     }
     if (name === 'mealsPerDay') {
-      setProfile(prev => ({ ...prev, mealsPerDay: parseInt(value, 10) || 3 }));
+      const numericValue = Number.parseInt(value, 10);
+      if (Number.isNaN(numericValue)) {
+        setProfile((prev) => ({ ...prev, mealsPerDay: 1 }));
+        return;
+      }
+      const clamped = Math.max(1, Math.min(6, numericValue));
+      setProfile((prev) => ({ ...prev, mealsPerDay: clamped }));
       return;
     }
     setProfile(prev => ({ ...prev, [name]: value }));
@@ -143,17 +149,18 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
             </div>
             <div>
                 <label htmlFor="mealsPerDay" className="block text-sm font-medium text-gray-700 mb-1">Meals Per Day</label>
-                <select
+                <input
+                    type="number"
                     name="mealsPerDay"
                     id="mealsPerDay"
                     value={profile.mealsPerDay ?? 3}
                     onChange={handleChange}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition bg-white"
-                >
-                    {[2,3,4].map(count => (
-                      <option key={count} value={count}>{count} 餐</option>
-                    ))}
-                </select>
+                    min={1}
+                    max={6}
+                    step={1}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
+                />
+                <p className="text-xs text-gray-500 mt-1">请输入 1-6 餐，系统会按餐次自动分配预算。</p>
             </div>
             <div>
                 <label htmlFor="budgetMode" className="block text-sm font-medium text-gray-700 mb-1">Budget Mode</label>

@@ -68,6 +68,13 @@ function getSmartBudgetTip(history: DailyPlanRecord[], currentPlan: DailyPlanRec
   return `你连续三天低于预算，共节省 ${formatCurrency(totalSaved)}，相当于替未来的自己存下了一份“特斯拉基金”。`;
 }
 
+function clampMealsPerDay(value: number | undefined): number {
+  if (!value || Number.isNaN(value)) {
+    return 1;
+  }
+  return Math.max(1, Math.min(6, Math.round(value)));
+}
+
 interface DailyRecommenderProps {
   profile: UserProfile;
   dishes: Dish[];
@@ -87,7 +94,7 @@ const DailyRecommender: React.FC<DailyRecommenderProps> = ({
 }) => {
   const [dailyBudget, setDailyBudget] = useState<number>(profile.budget);
   const [mode, setMode] = useState<BudgetMode>(profile.budgetMode ?? 'balanced');
-  const [mealsPerDay, setMealsPerDay] = useState<number>(profile.mealsPerDay ?? 3);
+  const [mealsPerDay, setMealsPerDay] = useState<number>(clampMealsPerDay(profile.mealsPerDay ?? 3));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<DailyPlanRecord | null>(null);
@@ -95,7 +102,7 @@ const DailyRecommender: React.FC<DailyRecommenderProps> = ({
   useEffect(() => {
     setDailyBudget(profile.budget);
     setMode(profile.budgetMode ?? 'balanced');
-    setMealsPerDay(profile.mealsPerDay ?? 3);
+    setMealsPerDay(clampMealsPerDay(profile.mealsPerDay ?? 3));
   }, [profile.budget, profile.budgetMode, profile.mealsPerDay]);
 
   useEffect(() => {
@@ -109,9 +116,11 @@ const DailyRecommender: React.FC<DailyRecommenderProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      onSettingsPersist({ budget: dailyBudget, mealsPerDay, mode });
+      const normalizedMeals = clampMealsPerDay(mealsPerDay);
+      setMealsPerDay(normalizedMeals);
+      onSettingsPersist({ budget: dailyBudget, mealsPerDay: normalizedMeals, mode });
       const planProfile: UserProfile = { ...profile, budget: dailyBudget };
-      const nextPlan = await generateDailyPlan(planProfile, dishes, mode, mealsPerDay);
+      const nextPlan = await generateDailyPlan(planProfile, dishes, mode, normalizedMeals);
       setPlan(nextPlan);
       onPlanGenerated(nextPlan);
       const minutes = profile.averageDecisionMinutes ?? DEFAULT_DECISION_MINUTES;
@@ -168,18 +177,16 @@ const DailyRecommender: React.FC<DailyRecommenderProps> = ({
           </div>
           <div className="space-y-3">
             <label className="block text-sm font-medium text-gray-700">每日餐次数量</label>
-            <select
+            <input
+              type="number"
+              min={1}
+              max={6}
+              step={1}
               value={mealsPerDay}
-              onChange={(event) => setMealsPerDay(Number(event.target.value))}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2 bg-white focus:ring-indigo-500 focus:border-indigo-500"
-            >
-              {[2, 3, 4].map((count) => (
-                <option key={count} value={count}>
-                  {count} 餐
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500">预算将按典型比例在不同餐次之间分配，可微调。</p>
+              onChange={(event) => setMealsPerDay(clampMealsPerDay(Number(event.target.value)))}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <p className="text-xs text-gray-500">可自定义 1-6 餐，系统会自动均衡分配预算。</p>
           </div>
           <div className="space-y-3">
             <label className="block text-sm font-medium text-gray-700">预算模式</label>
