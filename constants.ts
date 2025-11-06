@@ -6,11 +6,20 @@ export const MACRO_CONFIG = {
   [DietGoal.MAINTENANCE]: { protein: 1.5, carbs: 4.0, fat: 1.0 },
 };
 
-export const SATISFACTION_WEIGHTS = {
-  nutrition: 0.4,
-  preference: 0.3,
-  history: 0.2,
-  budget: 0.1,
+export type ScenarioKey = 'fat-loss' | 'muscle-gain' | 'group' | 'fired' | 'maintenance';
+
+export const SCENARIO_WEIGHTS: Record<ScenarioKey, {
+  nutrition: number;
+  preference: number;
+  history: number;
+  budget: number;
+  diversity: number;
+}> = {
+  'fat-loss': { nutrition: 0.45, preference: 0.2, history: 0.1, budget: 0.15, diversity: 0.1 },
+  'muscle-gain': { nutrition: 0.45, preference: 0.2, history: 0.1, budget: 0.15, diversity: 0.1 },
+  group: { nutrition: 0.25, preference: 0.25, history: 0.15, budget: 0.2, diversity: 0.15 },
+  fired: { nutrition: 0.2, preference: 0.1, history: 0.1, budget: 0.6, diversity: 0 },
+  maintenance: { nutrition: 0.35, preference: 0.25, history: 0.15, budget: 0.15, diversity: 0.1 },
 };
 
 export const MIN_SATISFACTION_SCORE = 70;

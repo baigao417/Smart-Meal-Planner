@@ -6,8 +6,9 @@ import {
   BudgetMode,
   DailyPlanRecord,
   DailyMealSlotPlan,
+  DietGoal,
 } from '../types';
-import { MACRO_CONFIG, SATISFACTION_WEIGHTS, MIN_SATISFACTION_SCORE } from '../constants';
+import { MACRO_CONFIG, MIN_SATISFACTION_SCORE, SCENARIO_WEIGHTS, ScenarioKey } from '../constants';
 import { siliconflowService } from '../services/siliconflowService';
 
 function calculateTargetMacros(profile: UserProfile): Macros {
@@ -19,13 +20,29 @@ function calculateTargetMacros(profile: UserProfile): Macros {
   };
 }
 
+const RECENT_REPEAT_DAYS = 3;
+
 function calculateNutritionScore(mealMacros: Macros, targetMacros: Macros): number {
   const proteinDiff = Math.abs(mealMacros.protein - targetMacros.protein) / (targetMacros.protein || 1);
   const carbsDiff = Math.abs(mealMacros.carbs - targetMacros.carbs) / (targetMacros.carbs || 1);
   const fatDiff = Math.abs(mealMacros.fat - targetMacros.fat) / (targetMacros.fat || 1);
-  
+
   const totalError = (proteinDiff + carbsDiff + fatDiff) / 3;
   return Math.max(0, 100 * (1 - totalError * 1.5)); // Penalize deviation more heavily
+}
+
+function calculateDiversityScore(meal: Dish[]): number {
+  if (meal.length <= 1) {
+    return meal.length === 1 ? 60 : 0;
+  }
+
+  const categorySet = new Set(meal.map((dish) => dish.category));
+  const restaurantSet = new Set(meal.map((dish) => dish.restaurant));
+
+  const categoryRatio = categorySet.size / meal.length;
+  const restaurantRatio = restaurantSet.size / meal.length;
+
+  return Math.round(((categoryRatio + restaurantRatio) / 2) * 100);
 }
 
 function calculateHistoryScore(dishes: Dish[]): number {
@@ -41,6 +58,60 @@ function calculateBudgetScore(totalPrice: number, budget: number): number {
     return Math.max(0, 100 - overflow * 200); // Heavy penalty for going over budget
   }
   return 100;
+}
+
+function isDishWithinBudget(dish: Dish, budget: number): boolean {
+  return dish.price <= budget * 1.3;
+}
+
+function isDishAlignedWithGoal(dish: Dish, goal: DietGoal): boolean {
+  switch (goal) {
+    case DietGoal.FAT_LOSS:
+      return !(dish.fat > 30 && dish.carbs > 60);
+    case DietGoal.MUSCLE_GAIN:
+      return dish.protein >= 20;
+    default:
+      return true;
+  }
+}
+
+function isDishRecentlyRepeated(dish: Dish): boolean {
+  if (!dish.lastEaten) return false;
+  const last = new Date(dish.lastEaten).getTime();
+  if (Number.isNaN(last)) return false;
+  const diff = Date.now() - last;
+  const threshold = RECENT_REPEAT_DAYS * 24 * 60 * 60 * 1000;
+  return diff < threshold;
+}
+
+function filterDishesForProfile(dishes: Dish[], profile: UserProfile, budget: number): Dish[] {
+  const filtered = dishes.filter(
+    (dish) => isDishWithinBudget(dish, budget) && isDishAlignedWithGoal(dish, profile.dietGoal) && !isDishRecentlyRepeated(dish)
+  );
+
+  if (filtered.length > 0) {
+    return filtered;
+  }
+
+  // If hard filters remove everything, relax goal/recent checks but keep budget guardrails.
+  return dishes.filter((dish) => isDishWithinBudget(dish, budget));
+}
+
+function resolveScenario(profile: UserProfile, options: MealSearchOptions): ScenarioKey {
+  if (options.scenario) {
+    return options.scenario;
+  }
+  if (options.budgetMode === 'saver' || profile.budgetMode === 'saver') {
+    return 'fired';
+  }
+  switch (profile.dietGoal) {
+    case DietGoal.FAT_LOSS:
+      return 'fat-loss';
+    case DietGoal.MUSCLE_GAIN:
+      return 'muscle-gain';
+    default:
+      return 'maintenance';
+  }
 }
 
 function checkMealWarnings(mealMacros: Macros, targetMacros: Macros): string[] {
@@ -70,7 +141,7 @@ function generateMealCandidates(dishes: Dish[], targetMacros: Macros, budget: nu
         
         for (const dish of shuffledDishes) {
             // Stop if meal is getting too large or expensive
-            if (currentPrice + dish.price > budget * 1.2 || currentMacros.protein > targetMacros.protein * 1.2) {
+            if (currentPrice + dish.price > budget * 1.3 || currentMacros.protein > targetMacros.protein * 1.2) {
                 continue;
             }
             // Add variety
@@ -91,12 +162,18 @@ function generateMealCandidates(dishes: Dish[], targetMacros: Macros, budget: nu
     // Ensure we have at least some single-dish options
     dishes.forEach(d => candidates.push([d]));
 
-    return candidates.filter(c => c.length > 0);
+    return candidates
+      .filter((c) => c.length > 0)
+      .filter((meal) => meal.reduce((sum, dish) => sum + dish.price, 0) <= budget * 1.3);
 }
+
+export type MealScenario = ScenarioKey;
 
 export type MealSearchOptions = {
   budgetOverride?: number;
   excludeDishIds?: Set<string>;
+  scenario?: MealScenario;
+  budgetMode?: BudgetMode;
 };
 
 export async function findBestMeal(
@@ -109,11 +186,15 @@ export async function findBestMeal(
   const filteredDishes = options.excludeDishIds
     ? dishes.filter((dish) => !options.excludeDishIds?.has(dish.id))
     : dishes;
-  const mealCandidates = generateMealCandidates(filteredDishes, targetMacros, effectiveBudget);
+  const prescreened = filterDishesForProfile(filteredDishes, profile, effectiveBudget);
+  const mealCandidates = generateMealCandidates(prescreened, targetMacros, effectiveBudget);
 
   if (mealCandidates.length === 0) return null;
 
   const preferenceScores = await siliconflowService.getBulkPreferenceScores(mealCandidates, profile);
+
+  const scenario = resolveScenario(profile, options);
+  const weights = SCENARIO_WEIGHTS[scenario];
 
   const scoredCandidates = mealCandidates.map((meal, index) => {
     const mealMacros: Macros = meal.reduce((acc, dish) => ({
@@ -121,19 +202,21 @@ export async function findBestMeal(
       carbs: acc.carbs + dish.carbs,
       fat: acc.fat + dish.fat,
     }), { protein: 0, carbs: 0, fat: 0 });
-    
+
     const totalPrice = meal.reduce((sum, dish) => sum + dish.price, 0);
 
     const nutritionScore = calculateNutritionScore(mealMacros, targetMacros);
     const historyScore = calculateHistoryScore(meal);
     const budgetScore = calculateBudgetScore(totalPrice, effectiveBudget);
-    const preferenceScore = preferenceScores[index]; // Use the score from the batch response
+    const preferenceScore = preferenceScores[index] ?? 50;
+    const diversityScore = calculateDiversityScore(meal);
 
-    const satisfactionScore = 
-      nutritionScore * SATISFACTION_WEIGHTS.nutrition +
-      preferenceScore * SATISFACTION_WEIGHTS.preference +
-      historyScore * SATISFACTION_WEIGHTS.history +
-      budgetScore * SATISFACTION_WEIGHTS.budget;
+    const satisfactionScore =
+      nutritionScore * weights.nutrition +
+      preferenceScore * weights.preference +
+      historyScore * weights.history +
+      budgetScore * weights.budget +
+      diversityScore * weights.diversity;
 
     return {
       dishes: meal,
@@ -224,6 +307,7 @@ export async function generateDailyPlan(
     const recommendation = await findBestMeal(profile, dishes, {
       budgetOverride: slotBudget,
       excludeDishIds: usedDishIds,
+      budgetMode: mode,
     });
     if (recommendation) {
       recommendation.dishes.forEach((dish) => usedDishIds.add(dish.id));

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Dish,
   GroupMealRecord,
@@ -18,15 +18,6 @@ interface GroupRecommenderProps {
   onSaveGroupMeal: (record: GroupMealRecord) => void;
   groupMeals: GroupMealRecord[];
   incrementTimeSaved: (minutes: number) => void;
-}
-
-interface AssistantResult {
-  restaurant: string;
-  headline: string;
-  perPersonBudget: number;
-  dishes: string[];
-  steps: string[];
-  summary: string;
 }
 
 const DEFAULT_DECISION_MINUTES = 15;
@@ -140,13 +131,6 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
   ]);
   const [groupMeal, setGroupMeal] = useState<MealRecommendation | null>(null);
   const [isLoadingMeal, setIsLoadingMeal] = useState(false);
-  const [assistantForm, setAssistantForm] = useState({
-    size: 4,
-    taste: currentUser.preferences ?? '',
-    budget: currentUser.budget ?? 60,
-  });
-  const [assistantLoading, setAssistantLoading] = useState(false);
-  const [assistantResult, setAssistantResult] = useState<AssistantResult | null>(null);
   const [logForm, setLogForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     restaurant: '',
@@ -156,37 +140,6 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
   });
   const [logError, setLogError] = useState<string | null>(null);
   const [isSavingLog, setIsSavingLog] = useState(false);
-
-  const selectedUserIds = useMemo(() => new Set(participants.map((p) => p.userId).filter(Boolean) as string[]), [participants]);
-
-  const availableUsers = useMemo(
-    () => allUsers.filter((user) => !selectedUserIds.has(user.id)),
-    [allUsers, selectedUserIds]
-  );
-
-  const handleParticipantUserChange = (id: string, userId: string) => {
-    setParticipants((prev) =>
-      prev.map((participant) => {
-        if (participant.id !== id) return participant;
-        if (!userId) {
-          return {
-            ...participant,
-            userId: undefined,
-            name: participant.name || '新成员',
-            customPreferences: participant.customPreferences ?? '',
-          };
-        }
-        const user = allUsers.find((candidate) => candidate.id === userId);
-        if (!user) return participant;
-        return {
-          ...participant,
-          userId: user.id,
-          name: user.name,
-          customPreferences: user.preferences ?? '',
-        };
-      })
-    );
-  };
 
   const handleParticipantField = (id: string, field: keyof GroupParticipant, value: string | number) => {
     setParticipants((prev) =>
@@ -215,18 +168,16 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
     );
   };
 
-  const addParticipant = (source?: UserProfile) => {
+  const addParticipant = () => {
     setParticipants((prev) => [
       ...prev,
-      source
-        ? createParticipantFromUser(source)
-        : {
-            id: `participant-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            name: '新成员',
-            weight: 1,
-            customPreferences: '',
-            shareRatio: 1,
-          },
+      {
+        id: `participant-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: '新成员',
+        weight: 1,
+        customPreferences: '',
+        shareRatio: 1,
+      },
     ]);
   };
 
@@ -249,24 +200,6 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
       setIsLoadingMeal(false);
     }
   }, [participants, allUsers, currentUser, dishes, incrementTimeSaved]);
-
-  const handleAssistant = async () => {
-    setAssistantLoading(true);
-    setAssistantResult(null);
-    try {
-      const result = await siliconflowService.recommendGroupDining({
-        partySize: assistantForm.size,
-        taste: assistantForm.taste,
-        budget: assistantForm.budget,
-      });
-      setAssistantResult(result);
-      incrementTimeSaved((currentUser.averageDecisionMinutes ?? DEFAULT_DECISION_MINUTES) * 0.5);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setAssistantLoading(false);
-    }
-  };
 
   const handleLogSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -339,7 +272,7 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
           {participants.map((participant, index) => (
             <div key={participant.id} className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-gray-700">成员名称</label>
                     <input
@@ -348,21 +281,6 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
                       onChange={(event) => handleParticipantField(participant.id, 'name', event.target.value)}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium text-gray-700">关联好友</label>
-                    <select
-                      value={participant.userId ?? ''}
-                      onChange={(event) => handleParticipantUserChange(participant.id, event.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="">自定义成员</option>
-                      {allUsers.map((user) => (
-                        <option key={user.id} value={user.id} disabled={participant.userId !== user.id && selectedUserIds.has(user.id)}>
-                          {user.name}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-gray-700">权重 (影响推荐)</label>
@@ -433,103 +351,16 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => addParticipant()}
+            onClick={addParticipant}
             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100"
           >
             <PlusIcon className="w-4 h-4" /> 添加自定义成员
           </button>
-          {availableUsers.length > 0 && (
-            <button
-              type="button"
-              onClick={() => addParticipant(availableUsers[0])}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg border border-indigo-500 text-indigo-600 hover:bg-indigo-50"
-            >
-              <PlusIcon className="w-4 h-4" /> 从好友列表添加
-            </button>
-          )}
         </div>
 
         {groupMeal && (
           <div className="pt-6">
             <RecommendationCard recommendation={groupMeal} />
-          </div>
-        )}
-      </section>
-
-      <section className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
-        <div className="flex flex-col gap-2">
-          <h3 className="text-2xl font-bold text-gray-900">聚餐 AI 助手</h3>
-          <p className="text-gray-600">三步输入人数、口味、预算，获取聚餐地点快速建议。</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">人数</label>
-            <input
-              type="number"
-              min={2}
-              value={assistantForm.size}
-              onChange={(event) => setAssistantForm((prev) => ({ ...prev, size: Number(event.target.value) }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <label className="text-sm font-medium text-gray-700">口味 / 场景</label>
-            <input
-              type="text"
-              value={assistantForm.taste}
-              onChange={(event) => setAssistantForm((prev) => ({ ...prev, taste: event.target.value }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="如：偏辣、想要火锅或烧烤、需要包间"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">预算 (¥/人)</label>
-            <input
-              type="number"
-              min={20}
-              value={assistantForm.budget}
-              onChange={(event) => setAssistantForm((prev) => ({ ...prev, budget: Number(event.target.value) }))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={handleAssistant}
-          disabled={assistantLoading}
-          className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-emerald-600 text-white font-semibold shadow hover:bg-emerald-700 disabled:bg-emerald-300"
-        >
-          {assistantLoading ? <ArrowPathIcon className="w-5 h-5 animate-spin" /> : <SparklesIcon className="w-5 h-5" />}
-          {assistantLoading ? '召唤中…' : '生成聚餐建议'}
-        </button>
-        {assistantResult && (
-          <div className="border border-emerald-200 rounded-2xl p-6 bg-emerald-50 space-y-4">
-            <div>
-              <p className="text-sm text-emerald-600 uppercase tracking-wide">推荐餐厅</p>
-              <h4 className="text-2xl font-semibold text-emerald-800">{assistantResult.restaurant}</h4>
-              <p className="text-emerald-700 mt-2">{assistantResult.headline}</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-white/70 border border-emerald-200 p-4">
-                <p className="text-sm text-emerald-600">人均预算</p>
-                <p className="text-xl font-semibold text-emerald-800">¥{assistantResult.perPersonBudget.toFixed(0)}</p>
-              </div>
-              <div className="rounded-xl bg-white/70 border border-emerald-200 p-4">
-                <p className="text-sm text-emerald-600">推荐菜品</p>
-                <p className="text-emerald-800 text-sm leading-relaxed">
-                  {assistantResult.dishes.join('、')}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-emerald-700">最多三步搞定：</p>
-              <ol className="list-decimal list-inside text-sm text-emerald-700 space-y-1">
-                {assistantResult.steps.map((step, index) => (
-                  <li key={index}>{step}</li>
-                ))}
-              </ol>
-            </div>
-            <p className="text-sm text-emerald-800">{assistantResult.summary}</p>
           </div>
         )}
       </section>
