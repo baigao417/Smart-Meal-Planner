@@ -1,12 +1,22 @@
 import { Buffer } from 'node:buffer';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { kv } from '@vercel/kv';
-import { Dish, SyncedUserData, UserProfile, CloudSyncProvider } from '../types';
+import {
+  Dish,
+  SyncedUserData,
+  UserProfile,
+  CloudSyncProvider,
+  GroupMealRecord,
+  DailyPlanRecord,
+} from '../types';
 
 type SyncRequestBody = {
   profile: UserProfile | null;
   dishes: Dish[];
   allUsers: UserProfile[];
+  groupMeals?: GroupMealRecord[];
+  dailyPlans?: DailyPlanRecord[];
+  timeSavedMinutes?: number;
 };
 
 type StorageSelection = {
@@ -292,6 +302,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         profile: body.profile,
         dishes: Array.isArray(body.dishes) ? body.dishes : [],
         allUsers: Array.isArray(body.allUsers) ? body.allUsers : [],
+        groupMeals: Array.isArray(body.groupMeals) ? body.groupMeals : [],
+        dailyPlans: Array.isArray(body.dailyPlans) ? body.dailyPlans : [],
+        timeSavedMinutes: typeof body.timeSavedMinutes === 'number' ? body.timeSavedMinutes : 0,
         updatedAt: new Date().toISOString(),
       };
 

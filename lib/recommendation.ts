@@ -1,4 +1,12 @@
-import { UserProfile, Dish, Macros, MealRecommendation } from '../types';
+import {
+  UserProfile,
+  Dish,
+  Macros,
+  MealRecommendation,
+  BudgetMode,
+  DailyPlanRecord,
+  DailyMealSlotPlan,
+} from '../types';
 import { MACRO_CONFIG, SATISFACTION_WEIGHTS, MIN_SATISFACTION_SCORE } from '../constants';
 import { siliconflowService } from '../services/siliconflowService';
 
@@ -86,10 +94,23 @@ function generateMealCandidates(dishes: Dish[], targetMacros: Macros, budget: nu
     return candidates.filter(c => c.length > 0);
 }
 
-export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promise<MealRecommendation | null> {
+export type MealSearchOptions = {
+  budgetOverride?: number;
+  excludeDishIds?: Set<string>;
+};
+
+export async function findBestMeal(
+  profile: UserProfile,
+  dishes: Dish[],
+  options: MealSearchOptions = {}
+): Promise<MealRecommendation | null> {
+  const effectiveBudget = options.budgetOverride ?? profile.budget;
   const targetMacros = calculateTargetMacros(profile);
-  const mealCandidates = generateMealCandidates(dishes, targetMacros, profile.budget);
-  
+  const filteredDishes = options.excludeDishIds
+    ? dishes.filter((dish) => !options.excludeDishIds?.has(dish.id))
+    : dishes;
+  const mealCandidates = generateMealCandidates(filteredDishes, targetMacros, effectiveBudget);
+
   if (mealCandidates.length === 0) return null;
 
   const preferenceScores = await siliconflowService.getBulkPreferenceScores(mealCandidates, profile);
@@ -105,7 +126,7 @@ export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promis
 
     const nutritionScore = calculateNutritionScore(mealMacros, targetMacros);
     const historyScore = calculateHistoryScore(meal);
-    const budgetScore = calculateBudgetScore(totalPrice, profile.budget);
+    const budgetScore = calculateBudgetScore(totalPrice, effectiveBudget);
     const preferenceScore = preferenceScores[index]; // Use the score from the batch response
 
     const satisfactionScore = 
@@ -142,4 +163,109 @@ export async function findBestMeal(profile: UserProfile, dishes: Dish[]): Promis
     : bestMeal.warnings;
 
   return { ...bestMeal, reasoning, warnings };
+}
+
+const SLOT_LABELS: Record<number, string[]> = {
+  2: ['Breakfast / Brunch', 'Dinner'],
+  3: ['Breakfast', 'Lunch', 'Dinner'],
+  4: ['Breakfast', 'Lunch', 'Afternoon', 'Dinner'],
+};
+
+const SLOT_WEIGHTS: Record<number, number[]> = {
+  2: [0.45, 0.55],
+  3: [0.25, 0.4, 0.35],
+  4: [0.2, 0.3, 0.2, 0.3],
+};
+
+const BUDGET_MODE_MULTIPLIER: Record<BudgetMode, number> = {
+  balanced: 1,
+  saver: 0.85,
+  enjoy: 1.1,
+};
+
+function getSlotLabels(mealsPerDay: number): string[] {
+  return SLOT_LABELS[mealsPerDay] ?? Array.from({ length: mealsPerDay }, (_, index) => `Meal ${index + 1}`);
+}
+
+function getSlotWeights(mealsPerDay: number): number[] {
+  const weights = SLOT_WEIGHTS[mealsPerDay];
+  if (weights && Math.abs(weights.reduce((sum, value) => sum + value, 0) - 1) < 0.001) {
+    return weights;
+  }
+  const equal = 1 / mealsPerDay;
+  return Array.from({ length: mealsPerDay }, () => equal);
+}
+
+function mergeMacros(target: Macros, addition: Macros): Macros {
+  return {
+    protein: target.protein + addition.protein,
+    carbs: target.carbs + addition.carbs,
+    fat: target.fat + addition.fat,
+  };
+}
+
+export async function generateDailyPlan(
+  profile: UserProfile,
+  dishes: Dish[],
+  mode: BudgetMode,
+  mealsPerDay: number
+): Promise<DailyPlanRecord> {
+  const normalizedMeals = Math.max(2, Math.min(5, mealsPerDay || 3));
+  const labels = getSlotLabels(normalizedMeals);
+  const weights = getSlotWeights(normalizedMeals);
+  const multiplier = BUDGET_MODE_MULTIPLIER[mode] ?? 1;
+  const adjustedBudget = profile.budget * multiplier;
+
+  const usedDishIds = new Set<string>();
+  const slots: DailyMealSlotPlan[] = [];
+
+  for (let index = 0; index < normalizedMeals; index += 1) {
+    const slotBudget = adjustedBudget * (weights[index] ?? 1 / normalizedMeals);
+    const recommendation = await findBestMeal(profile, dishes, {
+      budgetOverride: slotBudget,
+      excludeDishIds: usedDishIds,
+    });
+    if (recommendation) {
+      recommendation.dishes.forEach((dish) => usedDishIds.add(dish.id));
+    }
+    slots.push({ slot: labels[index] ?? `Meal ${index + 1}`, budget: slotBudget, recommendation });
+  }
+
+  const totals = slots.reduce(
+    (acc, slot) => {
+      if (!slot.recommendation) {
+        return acc;
+      }
+      return {
+        macros: mergeMacros(acc.macros, slot.recommendation.macros),
+        spent: acc.spent + slot.recommendation.totalPrice,
+        satisfaction: acc.satisfaction + slot.recommendation.satisfactionScore,
+        counted: acc.counted + 1,
+      };
+    },
+    {
+      macros: { protein: 0, carbs: 0, fat: 0 },
+      spent: 0,
+      satisfaction: 0,
+      counted: 0,
+    }
+  );
+
+  const plan: DailyPlanRecord = {
+    id: `plan-${Date.now()}`,
+    date: new Date().toISOString(),
+    mode,
+    budget: adjustedBudget,
+    mealsPerDay: normalizedMeals,
+    slots,
+    totalSpent: Number(totals.spent.toFixed(2)),
+    totalSatisfaction: totals.counted > 0 ? totals.satisfaction / totals.counted : 0,
+    macros: {
+      protein: Math.round(totals.macros.protein),
+      carbs: Math.round(totals.macros.carbs),
+      fat: Math.round(totals.macros.fat),
+    },
+  };
+
+  return plan;
 }

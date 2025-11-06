@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { UserProfile, Dish, DietGoal, CloudSyncStatus } from './types';
+import { UserProfile, Dish, DietGoal, CloudSyncStatus, DailyPlanRecord, GroupMealRecord, BudgetMode } from './types';
 import useLocalStorage from './hooks/useLocalStorage';
 import UserProfileSetup from './components/UserProfileSetup';
 import DailyRecommender from './components/DailyRecommender';
 import DishManager from './components/DishManager';
 import GroupRecommender from './components/GroupRecommender';
+import DailyPlanHistory from './components/DailyPlanHistory';
 import { sampleDishes, sampleUsers } from './constants';
 import { FireIcon, UserGroupIcon, Cog6ToothIcon, SparklesIcon, Bars3Icon, XMarkIcon, ArrowPathIcon } from './components/Icons';
 import { syncService, SyncServiceError } from './services/syncService';
 import { siliconflowService } from './services/siliconflowService';
 
-type View = 'recommender' | 'dishes' | 'group' | 'profile';
+type View = 'recommender' | 'dishes' | 'group' | 'history' | 'profile';
 
 const App: React.FC = () => {
   // Seeding logic to ensure sample dishes are only loaded once.
@@ -22,16 +23,82 @@ const App: React.FC = () => {
     !dishesSeeded ? sampleDishes : [] // Only provide samples if not yet seeded
   );
   const [allUsers, setAllUsers] = useLocalStorage<UserProfile[]>('all-users', sampleUsers);
+  const [dailyPlans, setDailyPlans] = useLocalStorage<DailyPlanRecord[]>('daily-plan-history', []);
+  const [groupMeals, setGroupMeals] = useLocalStorage<GroupMealRecord[]>('group-meals', []);
+  const [timeSavedMinutes, setTimeSavedMinutes] = useLocalStorage<number>('decision-minutes-saved', 0);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>({ available: false });
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<{ available: boolean; message?: string; model?: string } | null>(null);
   const [isCheckingAi, setIsCheckingAi] = useState(false);
+  const [view, setView] = useState<View>('recommender');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const hasCompletedInitialSync = useRef(false);
   const initialSyncInFlight = useRef(false);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualBackupInputRef = useRef<HTMLInputElement>(null);
+
+  const incrementTimeSaved = useCallback(
+    (minutes: number) => {
+      if (!Number.isFinite(minutes)) {
+        return;
+      }
+      setTimeSavedMinutes((prev) => Number((prev + Math.max(0, minutes)).toFixed(2)));
+    },
+    [setTimeSavedMinutes]
+  );
+
+  const handlePlanGenerated = useCallback(
+    (plan: DailyPlanRecord) => {
+      setDailyPlans((prev) => {
+        const filtered = prev.filter((existing) => existing.id !== plan.id);
+        return [plan, ...filtered].slice(0, 60);
+      });
+    },
+    [setDailyPlans]
+  );
+
+  const handlePlannerSettingsPersist = useCallback(
+    ({ budget, mealsPerDay, mode }: { budget: number; mealsPerDay: number; mode: BudgetMode }) => {
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              budget,
+              mealsPerDay,
+              budgetMode: mode,
+            }
+          : prev
+      );
+    },
+    [setProfile]
+  );
+
+  const handleSaveGroupMeal = useCallback(
+    (record: GroupMealRecord) => {
+      setGroupMeals((prev) => [record, ...prev].slice(0, 50));
+    },
+    [setGroupMeals]
+  );
+
+  const handleReusePlan = useCallback(
+    (record: DailyPlanRecord) => {
+      const clone: DailyPlanRecord = {
+        ...record,
+        id: `plan-${Date.now()}`,
+        date: new Date().toISOString(),
+      };
+      setDailyPlans((prev) => [clone, ...prev].slice(0, 60));
+      incrementTimeSaved((profile?.averageDecisionMinutes ?? 12) * 0.5);
+      setView('recommender');
+    },
+    [setDailyPlans, incrementTimeSaved, profile?.averageDecisionMinutes, setView]
+  );
+
+  const handleOpenHistory = useCallback(() => {
+    setView('history');
+  }, [setView]);
 
   // After the first render where we might have used sampleDishes, mark the seeded flag as true.
   // This ensures sample dishes are only added once, and an empty list is respected on subsequent loads.
@@ -40,10 +107,6 @@ const App: React.FC = () => {
       setDishesSeeded(true);
     }
   }, [dishesSeeded, setDishesSeeded]);
-
-
-  const [view, setView] = useState<View>('recommender');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const refreshAiStatus = useCallback(() => {
     setIsCheckingAi(true);
@@ -62,14 +125,20 @@ const App: React.FC = () => {
   }, [refreshAiStatus]);
   
   const handleProfileSave = (newProfile: UserProfile) => {
-    setProfile(newProfile);
+    const normalizedProfile: UserProfile = {
+      ...newProfile,
+      mealsPerDay: newProfile.mealsPerDay ?? profile?.mealsPerDay ?? 3,
+      budgetMode: newProfile.budgetMode ?? profile?.budgetMode ?? 'balanced',
+      averageDecisionMinutes: newProfile.averageDecisionMinutes ?? profile?.averageDecisionMinutes ?? 12,
+    };
+    setProfile(normalizedProfile);
     const userExists = allUsers.some(u => u.id === newProfile.id);
     if (!userExists) {
-        setAllUsers(prev => [...prev, newProfile]);
+        setAllUsers(prev => [...prev, normalizedProfile]);
     } else {
-        setAllUsers(prev => prev.map(u => u.id === newProfile.id ? newProfile : u));
+        setAllUsers(prev => prev.map(u => u.id === newProfile.id ? normalizedProfile : u));
     }
-    if (!newProfile.syncEnabled) {
+    if (!normalizedProfile.syncEnabled) {
       hasCompletedInitialSync.current = false;
       setSyncError(null);
     }
@@ -124,13 +193,31 @@ const App: React.FC = () => {
           return;
         }
         if (remoteData.profile !== undefined) {
-          setProfile(remoteData.profile);
+          setProfile(
+            remoteData.profile
+              ? {
+                  ...remoteData.profile,
+                  mealsPerDay: remoteData.profile.mealsPerDay ?? 3,
+                  budgetMode: remoteData.profile.budgetMode ?? 'balanced',
+                  averageDecisionMinutes: remoteData.profile.averageDecisionMinutes ?? 12,
+                }
+              : remoteData.profile
+          );
         }
         if (Array.isArray(remoteData.dishes)) {
           setDishes(remoteData.dishes);
         }
         if (Array.isArray(remoteData.allUsers)) {
           setAllUsers(remoteData.allUsers);
+        }
+        if (Array.isArray(remoteData.dailyPlans)) {
+          setDailyPlans(remoteData.dailyPlans);
+        }
+        if (Array.isArray(remoteData.groupMeals)) {
+          setGroupMeals(remoteData.groupMeals);
+        }
+        if (typeof remoteData.timeSavedMinutes === 'number') {
+          setTimeSavedMinutes(remoteData.timeSavedMinutes);
         }
         setLastSyncedAt(remoteData.updatedAt ?? new Date().toISOString());
       })
@@ -152,6 +239,9 @@ const App: React.FC = () => {
               profile,
               dishes,
               allUsers,
+              groupMeals,
+              dailyPlans,
+              timeSavedMinutes,
             })
             .then((remoteData) => {
               if (cancelled) return;
@@ -183,7 +273,18 @@ const App: React.FC = () => {
       cancelled = true;
       initialSyncInFlight.current = false;
     };
-  }, [profile?.syncEnabled, profile?.email, cloudSyncStatus.available, cloudSyncStatus.hint, setProfile, setDishes, setAllUsers]);
+  }, [
+    profile?.syncEnabled,
+    profile?.email,
+    cloudSyncStatus.available,
+    cloudSyncStatus.hint,
+    setProfile,
+    setDishes,
+    setAllUsers,
+    setDailyPlans,
+    setGroupMeals,
+    setTimeSavedMinutes,
+  ]);
 
   useEffect(() => {
     if (syncTimeoutRef.current) {
@@ -202,6 +303,9 @@ const App: React.FC = () => {
           profile,
           dishes,
           allUsers,
+          groupMeals,
+          dailyPlans,
+          timeSavedMinutes,
         })
         .then((remoteData) => {
           setSyncError(null);
@@ -224,7 +328,7 @@ const App: React.FC = () => {
         syncTimeoutRef.current = null;
       }
     };
-  }, [profile, dishes, allUsers, cloudSyncStatus.available]);
+  }, [profile, dishes, allUsers, groupMeals, dailyPlans, timeSavedMinutes, cloudSyncStatus.available]);
 
   // Fix: Replaced JSX.Element with React.ReactElement to resolve "Cannot find namespace 'JSX'" error.
   // Fix: Specified props for the icon to allow cloning with className.
@@ -249,6 +353,9 @@ const App: React.FC = () => {
       profile,
       dishes,
       allUsers,
+      dailyPlans,
+      groupMeals,
+      timeSavedMinutes,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -277,16 +384,33 @@ const App: React.FC = () => {
         profile?: UserProfile | null;
         dishes?: Dish[];
         allUsers?: UserProfile[];
+        dailyPlans?: DailyPlanRecord[];
+        groupMeals?: GroupMealRecord[];
+        timeSavedMinutes?: number;
       };
 
       if (parsed.profile) {
-        setProfile(parsed.profile);
+        setProfile({
+          ...parsed.profile,
+          mealsPerDay: parsed.profile.mealsPerDay ?? 3,
+          budgetMode: parsed.profile.budgetMode ?? 'balanced',
+          averageDecisionMinutes: parsed.profile.averageDecisionMinutes ?? 12,
+        });
       }
       if (Array.isArray(parsed.dishes)) {
         setDishes(parsed.dishes);
       }
       if (Array.isArray(parsed.allUsers)) {
         setAllUsers(parsed.allUsers);
+      }
+      if (Array.isArray(parsed.dailyPlans)) {
+        setDailyPlans(parsed.dailyPlans);
+      }
+      if (Array.isArray(parsed.groupMeals)) {
+        setGroupMeals(parsed.groupMeals);
+      }
+      if (typeof parsed.timeSavedMinutes === 'number') {
+        setTimeSavedMinutes(parsed.timeSavedMinutes);
       }
       alert('Backup restored. Review your meals and profile before continuing.');
     } catch (error) {
@@ -315,11 +439,31 @@ const App: React.FC = () => {
 
     switch (view) {
       case 'recommender':
-        return <DailyRecommender profile={profile} dishes={dishes} />;
+        return (
+          <DailyRecommender
+            profile={profile}
+            dishes={dishes}
+            history={dailyPlans}
+            onPlanGenerated={handlePlanGenerated}
+            onSettingsPersist={handlePlannerSettingsPersist}
+            incrementTimeSaved={incrementTimeSaved}
+          />
+        );
       case 'dishes':
         return <DishManager dishes={dishes} setDishes={setDishes} />;
       case 'group':
-        return <GroupRecommender allUsers={allUsers} dishes={dishes} currentUser={profile} />;
+        return (
+          <GroupRecommender
+            allUsers={allUsers}
+            dishes={dishes}
+            currentUser={profile}
+            onSaveGroupMeal={handleSaveGroupMeal}
+            groupMeals={groupMeals}
+            incrementTimeSaved={incrementTimeSaved}
+          />
+        );
+      case 'history':
+        return <DailyPlanHistory history={dailyPlans} onReusePlan={handleReusePlan} />;
       case 'profile':
         return (
           <UserProfileSetup
@@ -332,18 +476,64 @@ const App: React.FC = () => {
           />
         );
       default:
-        return <DailyRecommender profile={profile} dishes={dishes} />;
+        return (
+          <DailyRecommender
+            profile={profile}
+            dishes={dishes}
+            history={dailyPlans}
+            onPlanGenerated={handlePlanGenerated}
+            onSettingsPersist={handlePlannerSettingsPersist}
+            incrementTimeSaved={incrementTimeSaved}
+          />
+        );
     }
-  }, [view, profile, dishes, allUsers, cloudSyncStatus.available, cloudSyncStatus.hint, cloudSyncStatus.provider, syncError]);
+  }, [
+    view,
+    profile,
+    dishes,
+    allUsers,
+    dailyPlans,
+    groupMeals,
+    cloudSyncStatus.available,
+    cloudSyncStatus.hint,
+    cloudSyncStatus.provider,
+    syncError,
+    handlePlanGenerated,
+    handlePlannerSettingsPersist,
+    incrementTimeSaved,
+    handleSaveGroupMeal,
+    handleReusePlan,
+  ]);
 
   const navContent = (
     <nav className="p-4 space-y-2">
         <NavItem currentView={view} viewName="recommender" icon={<SparklesIcon />} label="Today's Meal" />
         <NavItem currentView={view} viewName="dishes" icon={<Bars3Icon />} label="My Dishes" />
         <NavItem currentView={view} viewName="group" icon={<UserGroupIcon />} label="Group Mode" />
+        <NavItem currentView={view} viewName="history" icon={<ArrowPathIcon />} label="History" />
         <NavItem currentView={view} viewName="profile" icon={<Cog6ToothIcon />} label="My Profile" />
     </nav>
   );
+
+  const timeSavedSummary = useMemo(() => {
+    if (timeSavedMinutes <= 0) {
+      return {
+        headline: '累计节省 0 分钟',
+        detail: '生成今日推荐或团体菜单即可点亮 FIRE 计时器。',
+      };
+    }
+    const hours = timeSavedMinutes / 60;
+    if (hours >= 1) {
+      return {
+        headline: `累计节省 ${hours.toFixed(1)} 小时`,
+        detail: `≈ ${Math.round(timeSavedMinutes)} 分钟决策能量`,
+      };
+    }
+    return {
+      headline: `累计节省 ${Math.round(timeSavedMinutes)} 分钟`,
+      detail: '已经替未来的自己多赚了一顿饭的时间。',
+    };
+  }, [timeSavedMinutes]);
 
   return (
     <div className="min-h-[100dvh] lg:flex">
@@ -414,6 +604,20 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
+            <div className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-orange-700 uppercase tracking-wide">🔥 FIRE 计时器</p>
+                <p className="text-lg font-bold text-orange-800">{timeSavedSummary.headline}</p>
+                <p className="text-sm text-orange-700">{timeSavedSummary.detail}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenHistory}
+                className="px-3 py-2 text-sm font-semibold rounded-lg bg-orange-600 text-white hover:bg-orange-700"
+              >
+                查看历史
+              </button>
+            </div>
             {profile?.syncEnabled && profile.email && (
               <div
                 className={`rounded-xl border ${

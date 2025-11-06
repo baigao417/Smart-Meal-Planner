@@ -27,7 +27,37 @@ export const sampleDishes: Dish[] = [
 ];
 
 export const sampleUsers: UserProfile[] = [
-    { id: 'u1', name: 'Alex', weightKg: 75, dietGoal: DietGoal.MUSCLE_GAIN, preferences: 'Loves spicy food, enjoys chicken and beef.', budget: 40 },
-    { id: 'u2', name: 'Brenda', weightKg: 60, dietGoal: DietGoal.FAT_LOSS, preferences: 'Vegetarian, avoids greasy food, dislikes cilantro.', budget: 30 },
-    { id: 'u3', name: 'Charlie', weightKg: 80, dietGoal: DietGoal.MAINTENANCE, preferences: 'Eats anything but dislikes very spicy food. Prefers fish over red meat.', budget: 50 },
+  {
+    id: 'u1',
+    name: 'Alex',
+    weightKg: 75,
+    dietGoal: DietGoal.MUSCLE_GAIN,
+    preferences: 'Loves spicy food, enjoys chicken and beef.',
+    budget: 40,
+    mealsPerDay: 3,
+    budgetMode: 'balanced',
+    averageDecisionMinutes: 12,
+  },
+  {
+    id: 'u2',
+    name: 'Brenda',
+    weightKg: 60,
+    dietGoal: DietGoal.FAT_LOSS,
+    preferences: 'Vegetarian, avoids greasy food, dislikes cilantro.',
+    budget: 30,
+    mealsPerDay: 3,
+    budgetMode: 'saver',
+    averageDecisionMinutes: 12,
+  },
+  {
+    id: 'u3',
+    name: 'Charlie',
+    weightKg: 80,
+    dietGoal: DietGoal.MAINTENANCE,
+    preferences: 'Eats anything but dislikes very spicy food. Prefers fish over red meat.',
+    budget: 50,
+    mealsPerDay: 3,
+    budgetMode: 'balanced',
+    averageDecisionMinutes: 12,
+  },
 ];

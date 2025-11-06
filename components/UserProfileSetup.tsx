@@ -27,6 +27,9 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
       dietGoal: DietGoal.MAINTENANCE,
       preferences: '',
       budget: 30,
+      mealsPerDay: 3,
+      budgetMode: 'balanced',
+      averageDecisionMinutes: 12,
       email: '',
       syncEnabled: false,
     }
@@ -40,14 +43,21 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
         ...currentUser,
         email: currentUser.email ?? '',
         syncEnabled: currentUser.syncEnabled ?? false,
+        mealsPerDay: currentUser.mealsPerDay ?? 3,
+        budgetMode: currentUser.budgetMode ?? 'balanced',
+        averageDecisionMinutes: currentUser.averageDecisionMinutes ?? 12,
       });
     }
   }, [currentUser]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    if (name === 'weightKg' || name === 'budget') {
+    if (name === 'weightKg' || name === 'budget' || name === 'averageDecisionMinutes') {
       setProfile(prev => ({ ...prev, [name]: parseFloat(value) }));
+      return;
+    }
+    if (name === 'mealsPerDay') {
+      setProfile(prev => ({ ...prev, mealsPerDay: parseInt(value, 10) || 3 }));
       return;
     }
     setProfile(prev => ({ ...prev, [name]: value }));
@@ -131,8 +141,36 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
                 />
             </div>
+            <div>
+                <label htmlFor="mealsPerDay" className="block text-sm font-medium text-gray-700 mb-1">Meals Per Day</label>
+                <select
+                    name="mealsPerDay"
+                    id="mealsPerDay"
+                    value={profile.mealsPerDay ?? 3}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition bg-white"
+                >
+                    {[2,3,4].map(count => (
+                      <option key={count} value={count}>{count} 餐</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label htmlFor="budgetMode" className="block text-sm font-medium text-gray-700 mb-1">Budget Mode</label>
+                <select
+                    name="budgetMode"
+                    id="budgetMode"
+                    value={profile.budgetMode ?? 'balanced'}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition bg-white"
+                >
+                    <option value="balanced">平衡模式</option>
+                    <option value="saver">节约模式</option>
+                    <option value="enjoy">享受模式</option>
+                </select>
+            </div>
         </div>
-        
+
         <div>
           <label htmlFor="dietGoal" className="block text-sm font-medium text-gray-700 mb-1">Primary Goal</label>
           <select
@@ -147,6 +185,23 @@ const UserProfileSetup: React.FC<UserProfileSetupProps> = ({
               <option key={goal} value={goal}>{goal}</option>
             ))}
           </select>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label htmlFor="averageDecisionMinutes" className="block text-sm font-medium text-gray-700 mb-1">Time Saved per Plan (minutes)</label>
+            <input
+              type="number"
+              name="averageDecisionMinutes"
+              id="averageDecisionMinutes"
+              value={profile.averageDecisionMinutes ?? 12}
+              min="5"
+              max="60"
+              onChange={handleChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition"
+            />
+            <p className="text-xs text-gray-500 mt-1">用于 FIRE 计时器，衡量你每次决策节省的平均时间。</p>
+          </div>
         </div>
 
         <div>

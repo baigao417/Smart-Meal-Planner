@@ -1,9 +1,12 @@
-import { CloudSyncStatus, Dish, SyncedUserData, UserProfile } from '../types';
+import { CloudSyncStatus, Dish, SyncedUserData, UserProfile, GroupMealRecord, DailyPlanRecord } from '../types';
 
 export type SyncPayload = {
   profile: UserProfile | null;
   dishes: Dish[];
   allUsers: UserProfile[];
+  groupMeals: GroupMealRecord[];
+  dailyPlans: DailyPlanRecord[];
+  timeSavedMinutes: number;
 };
 
 export class SyncServiceError extends Error {

@@ -10,6 +10,8 @@ export interface Macros {
   fat: number;
 }
 
+export type BudgetMode = 'balanced' | 'saver' | 'enjoy';
+
 export interface UserProfile {
   id: string;
   name:string;
@@ -17,6 +19,9 @@ export interface UserProfile {
   dietGoal: DietGoal;
   preferences: string; // e.g., "loves spicy, hates seafood"
   budget: number; // Daily budget
+  mealsPerDay?: number;
+  budgetMode?: BudgetMode;
+  averageDecisionMinutes?: number;
   email?: string;
   syncEnabled?: boolean;
 }
@@ -46,15 +51,23 @@ export interface MealRecommendation {
 }
 
 export interface GroupParticipant {
-    userId: string;
+    id: string;
+    userId?: string;
+    name: string;
     weight: number; // Weight for recommendation algorithm
     customPreferences?: string;
+    shareRatio?: number;
+    personalScore?: number;
+    notes?: string;
 }
 
 export interface SyncedUserData {
   profile: UserProfile | null;
   dishes: Dish[];
   allUsers: UserProfile[];
+  groupMeals?: GroupMealRecord[];
+  dailyPlans?: DailyPlanRecord[];
+  timeSavedMinutes?: number;
   updatedAt: string;
 }
 
@@ -64,4 +77,50 @@ export interface CloudSyncStatus {
   available: boolean;
   provider?: CloudSyncProvider;
   hint?: string;
+}
+
+export interface GroupMealParticipantRecord {
+  id: string;
+  groupMealId: string;
+  userId?: string;
+  name: string;
+  shareRatio: number;
+  personalScore?: number;
+  notes?: string;
+}
+
+export interface SharedDishInfo {
+  name: string;
+  calories?: number;
+  shareRatio?: number;
+}
+
+export interface GroupMealRecord {
+  id: string;
+  date: string;
+  restaurant: string;
+  totalPrice: number;
+  sharedDishes: SharedDishInfo[];
+  totalScore?: number;
+  createdBy: string;
+  participants: GroupMealParticipantRecord[];
+  notes?: string;
+}
+
+export interface DailyMealSlotPlan {
+  slot: string;
+  budget: number;
+  recommendation: MealRecommendation | null;
+}
+
+export interface DailyPlanRecord {
+  id: string;
+  date: string;
+  mode: BudgetMode;
+  budget: number;
+  mealsPerDay: number;
+  slots: DailyMealSlotPlan[];
+  totalSpent: number;
+  totalSatisfaction: number;
+  macros: Macros;
 }
