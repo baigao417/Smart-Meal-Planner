@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { siliconflowService } from '../services/siliconflowService';
 import { ArrowPathIcon, PlusIcon, SparklesIcon, XMarkIcon } from './Icons';
+import useLocalStorage from '../hooks/useLocalStorage';
 
 interface GroupRecommenderProps {
   onSaveGroupMeal: (record: GroupMealRecord) => void;
@@ -15,8 +16,11 @@ interface GroupRecommenderProps {
 
 type MemberCard = GroupMemberInput;
 
+type MemberField = 'name' | 'weight' | 'split' | 'preference';
+
 type ParticipantRow = {
   id: string;
+  memberId?: string;
   name: string;
   score: string;
   comment: string;
@@ -33,8 +37,9 @@ const createMember = (index: number): MemberCard => ({
   preference: '',
 });
 
-const createParticipantRow = (name = ''): ParticipantRow => ({
+const createParticipantRow = (name = '', memberId?: string): ParticipantRow => ({
   id: generateId('participant'),
+  memberId,
   name,
   score: '',
   comment: '',
@@ -79,10 +84,10 @@ const formatCurrency = (value: number | undefined) => `¥${Number(value ?? 0).to
 const getToday = () => new Date().toISOString().slice(0, 10);
 
 const MealRecordForm: React.FC<{
-  initialParticipants: string[];
+  members: MemberCard[];
   onSave: (record: GroupMealRecord) => void;
   history: GroupMealRecord[];
-}> = ({ initialParticipants, onSave, history }) => {
+}> = ({ members, onSave, history }) => {
   const [form, setForm] = useState({
     date: getToday(),
     restaurant: '',
@@ -91,27 +96,46 @@ const MealRecordForm: React.FC<{
     overallFeeling: '',
     notes: '',
   });
-  const [rows, setRows] = useState<ParticipantRow[]>(() => [createParticipantRow()]);
+  const buildRowsFromMembers = useCallback((source: MemberCard[], previous: ParticipantRow[] = []) => {
+    if (!Array.isArray(source) || source.length === 0) {
+      return previous.length ? previous : [createParticipantRow()];
+    }
+
+    const existingByMemberId = new Map(
+      previous.filter((row) => row.memberId).map((row) => [row.memberId as string, row])
+    );
+    const manualRows = previous.filter((row) => !row.memberId);
+
+    const syncedRows = source.map((member, index) => {
+      const label = (member.name ?? '').trim() || `成员 ${index + 1}`;
+      const existing = member.id ? existingByMemberId.get(member.id) : undefined;
+      if (existing) {
+        if (existing.name !== label || existing.memberId !== member.id) {
+          return { ...existing, name: label, memberId: member.id };
+        }
+        return existing;
+      }
+      return { ...createParticipantRow(label, member.id), score: '', comment: '' };
+    });
+
+    return [...syncedRows, ...manualRows];
+  }, []);
+  const [rows, setRows] = useState<ParticipantRow[]>(() => buildRowsFromMembers(members));
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    setRows((prev) => {
-      if (!initialParticipants.length) {
-        return prev.length ? prev : [createParticipantRow()];
-      }
-      const hasEdits = prev.some((row) => row.score.trim() || row.comment.trim());
-      if (hasEdits) {
-        return prev;
-      }
-      return initialParticipants.map((name, index) => ({
-        id: prev[index]?.id ?? generateId('participant'),
-        name: name || `成员 ${index + 1}`,
-        score: '',
-        comment: '',
-      }));
-    });
-  }, [initialParticipants]);
+    setRows((prev) => buildRowsFromMembers(members, prev));
+  }, [members, buildRowsFromMembers]);
+
+  const memberOptions = useMemo(
+    () =>
+      members.map((member, index) => ({
+        id: member.id,
+        label: (member.name ?? '').trim() || `成员 ${index + 1}`,
+      })),
+    [members]
+  );
 
   const averageScore = useMemo(() => {
     const scores = rows
@@ -206,11 +230,7 @@ const MealRecordForm: React.FC<{
         overallFeeling: '',
         notes: '',
       }));
-      setRows(() =>
-        (initialParticipants.length
-          ? initialParticipants.map((name, index) => createParticipantRow(name || `成员 ${index + 1}`))
-          : [createParticipantRow()])
-      );
+      setRows(() => buildRowsFromMembers(members));
     } finally {
       setIsSaving(false);
     }
@@ -258,6 +278,11 @@ const MealRecordForm: React.FC<{
         <div className="space-y-1">
           <label className="text-sm font-medium text-gray-700">参与成员</label>
           <div className="space-y-3">
+            <datalist id="group-member-options">
+              {memberOptions.map((option) => (
+                <option key={option.id} value={option.label} />
+              ))}
+            </datalist>
             {rows.map((row, index) => (
               <div key={row.id} className="rounded-xl border border-gray-200 p-3 bg-gray-50">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
@@ -268,6 +293,7 @@ const MealRecordForm: React.FC<{
                       onChange={(event) => handleRowChange(row.id, 'name', event.target.value)}
                       placeholder={`成员 ${index + 1}`}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      list="group-member-options"
                     />
                     <input
                       type="number"
@@ -417,61 +443,223 @@ const MealRecordForm: React.FC<{
   );
 };
 
+interface GroupMealModeProps {
+  members: MemberCard[];
+  onMemberChange: (id: string, field: MemberField, value: string) => void;
+  onAddMember: () => void;
+  onRemoveMember: (id: string) => void;
+  onGenerateMenu: () => void;
+  isGenerating: boolean;
+  error: string | null;
+  plan: GroupMenuPlan | null;
+}
+
+const GroupMealMode: React.FC<GroupMealModeProps> = ({
+  members,
+  onMemberChange,
+  onAddMember,
+  onRemoveMember,
+  onGenerateMenu,
+  isGenerating,
+  error,
+  plan,
+}) => {
+  return (
+    <section className="space-y-6 rounded-2xl bg-white p-6 shadow-lg">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-3xl font-bold text-gray-900">Group Meal Mode</h2>
+        <p className="text-gray-600">添加成员信息，生成兼顾偏好与预算的聚餐菜单。</p>
+      </div>
+      <div className="space-y-4">
+        {members.map((member, index) => (
+          <div key={member.id} className="space-y-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex-1 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">成员名称</label>
+                  <input
+                    type="text"
+                    value={member.name}
+                    onChange={(event) => onMemberChange(member.id, 'name', event.target.value)}
+                    placeholder={`成员 ${index + 1}`}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">权重</label>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    value={member.weight}
+                    onChange={(event) => onMemberChange(member.id, 'weight', event.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">分摊比例</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={member.split}
+                    onChange={(event) => onMemberChange(member.id, 'split', event.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemoveMember(member.id)}
+                className="flex items-center gap-1 text-sm font-semibold text-rose-600 hover:text-rose-700"
+                disabled={members.length === 1}
+              >
+                <XMarkIcon className="h-4 w-4" /> 移除
+              </button>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">个人偏好 / 禁忌 / 想尝试的菜</label>
+              <textarea
+                rows={2}
+                value={member.preference}
+                onChange={(event) => onMemberChange(member.id, 'preference', event.target.value)}
+                placeholder="例如：不吃辣，偏爱鱼类"
+                className="w-full rounded-lg border border-dashed border-indigo-300 bg-white px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onAddMember}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+        >
+          <PlusIcon className="h-4 w-4" /> 添加自定义成员
+        </button>
+        <button
+          type="button"
+          onClick={onGenerateMenu}
+          disabled={isGenerating}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white shadow hover:bg-indigo-700 disabled:bg-indigo-300"
+        >
+          {isGenerating ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : null}
+          {isGenerating ? '生成中…' : '生成小组菜单'}
+        </button>
+        {error && <span className="text-sm text-rose-600">{error}</span>}
+      </div>
+      {plan && (
+        <div className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+          <div>
+            <h3 className="text-xl font-semibold text-indigo-900">推荐菜单</h3>
+            <p className="mt-1 text-sm text-indigo-800">{plan.summary}</p>
+          </div>
+          <ul className="space-y-2">
+            {plan.dishes.map((dish, index) => (
+              <li key={`${dish.name}-${index}`} className="rounded-lg bg-white/70 p-3 text-sm text-indigo-900 shadow-sm">
+                <p className="font-semibold">{dish.name}</p>
+                <p className="mt-1 text-indigo-800">{dish.description}</p>
+                {typeof dish.estimatedPrice === 'number' && (
+                  <p className="mt-1 text-xs text-indigo-700">预估价格：{formatCurrency(dish.estimatedPrice)}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+          {plan.tips && <p className="text-sm text-indigo-800">提示：{plan.tips}</p>}
+        </div>
+      )}
+    </section>
+  );
+};
+
 const GroupRecommender: React.FC<GroupRecommenderProps> = ({ onSaveGroupMeal, groupMeals }) => {
-  const [members, setMembers] = useState<MemberCard[]>(() => [createMember(1)]);
+  const [members, setMembers] = useLocalStorage<MemberCard[]>('group-members', [createMember(1)]);
   const [plan, setPlan] = useState<GroupMenuPlan | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastMemberNames, setLastMemberNames] = useState<string[]>(() =>
-    groupMeals[0]?.participants?.map((participant) => participant.name).filter(Boolean) ?? []
-  );
 
   useEffect(() => {
-    if (!lastMemberNames.length && groupMeals.length) {
-      setLastMemberNames(groupMeals[0].participants?.map((participant) => participant.name).filter(Boolean) ?? []);
-    }
-  }, [groupMeals, lastMemberNames.length]);
+    setMembers((prev) => {
+      const existing = Array.isArray(prev) ? prev : [];
+      if (existing.length === 0) {
+        return [createMember(1)];
+      }
 
-  const updateMember = (id: string, field: keyof MemberCard, value: string) => {
-    setMembers((prev) =>
-      prev.map((member) => {
-        if (member.id !== id) {
-          return member;
-        }
-        if (field === 'weight' || field === 'split') {
-          const parsed = parseFloat(value);
-          const numeric = clampNumber(parsed, field === 'weight' ? 0.1 : 0);
-          const fallback = 1;
-          const stored = Number.isFinite(parsed) ? Number(numeric.toFixed(2)) : fallback;
-          return { ...member, [field]: stored };
-        }
-        return { ...member, [field]: value };
-      })
-    );
-  };
+      const sanitized = existing.map((member) => ({
+        id: member.id || generateId('member'),
+        name: typeof member.name === 'string' ? member.name : '',
+        weight: Number.isFinite(member.weight) ? Number(member.weight) : 1,
+        split: Number.isFinite(member.split) ? Number(member.split) : 1,
+        preference: typeof member.preference === 'string' ? member.preference : '',
+      }));
 
-  const addMember = () => {
-    setMembers((prev) => [...prev, createMember(prev.length + 1)]);
-  };
+      const unchanged =
+        sanitized.length === existing.length &&
+        sanitized.every((member, index) => {
+          const original = existing[index];
+          return (
+            original &&
+            original.id === member.id &&
+            original.name === member.name &&
+            original.weight === member.weight &&
+            original.split === member.split &&
+            original.preference === member.preference
+          );
+        });
 
-  const removeMember = (id: string) => {
-    setMembers((prev) => (prev.length > 1 ? prev.filter((member) => member.id !== id) : prev));
-  };
+      return unchanged ? prev : sanitized;
+    });
+  }, [setMembers]);
 
-  const handleGenerate = useCallback(async () => {
+  const handleMemberChange = useCallback(
+    (id: string, field: MemberField, value: string) => {
+      setMembers((prev) =>
+        prev.map((member) => {
+          if (member.id !== id) {
+            return member;
+          }
+          if (field === 'weight' || field === 'split') {
+            const parsed = parseFloat(value);
+            const numeric = clampNumber(parsed, field === 'weight' ? 0.1 : 0);
+            const fallback = 1;
+            const stored = Number.isFinite(parsed) ? Number(numeric.toFixed(2)) : fallback;
+            return { ...member, [field]: stored };
+          }
+          return { ...member, [field]: value };
+        })
+      );
+    },
+    [setMembers]
+  );
+
+  const handleAddMember = useCallback(() => {
+    setMembers((prev) => {
+      const nextIndex = prev.length + 1;
+      return [...prev, createMember(nextIndex)];
+    });
+  }, [setMembers]);
+
+  const handleRemoveMember = useCallback(
+    (id: string) => {
+      setMembers((prev) => (prev.length > 1 ? prev.filter((member) => member.id !== id) : prev));
+    },
+    [setMembers]
+  );
+
+  const handleGenerateMenu = useCallback(async () => {
     setError(null);
     setIsGenerating(true);
     setPlan(null);
     try {
-      const sanitized = members.map((member, index) => ({
-        name: member.name.trim() || `成员 ${index + 1}`,
-        weight: Number.isFinite(member.weight) ? member.weight : 1,
-        split: Number.isFinite(member.split) ? member.split : 1,
-        preference: member.preference.trim(),
+      const payload = members.map((member, index) => ({
+        name: (member.name ?? '').trim() || `成员 ${index + 1}`,
+        weight: Number.isFinite(member.weight) ? Number(member.weight) : 1,
+        split: Number.isFinite(member.split) ? Number(member.split) : 1,
+        preference: (member.preference ?? '').trim(),
       }));
-      const planResult = await siliconflowService.generateGroupMenuPlan(sanitized);
+      const planResult = await siliconflowService.generateGroupMenuPlan(payload);
       setPlan(planResult);
-      setLastMemberNames(sanitized.map((member) => member.name));
     } catch (planError) {
       console.error(planError);
       setError('生成菜单时出现问题，请稍后再试。');
@@ -482,114 +670,19 @@ const GroupRecommender: React.FC<GroupRecommenderProps> = ({ onSaveGroupMeal, gr
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 pb-16">
-      <section className="space-y-6 rounded-2xl bg-white p-6 shadow-lg">
-        <div className="flex flex-col gap-2">
-          <h2 className="text-3xl font-bold text-gray-900">Group Meal Mode</h2>
-          <p className="text-gray-600">添加成员信息，生成兼顾偏好与预算的聚餐菜单。</p>
-        </div>
-        <div className="space-y-4">
-          {members.map((member, index) => (
-            <div key={member.id} className="space-y-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex-1 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium text-gray-700">成员名称</label>
-                    <input
-                      type="text"
-                      value={member.name}
-                      onChange={(event) => updateMember(member.id, 'name', event.target.value)}
-                      placeholder={`成员 ${index + 1}`}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium text-gray-700">权重</label>
-                    <input
-                      type="number"
-                      min={0.1}
-                      step={0.1}
-                      value={member.weight}
-                      onChange={(event) => updateMember(member.id, 'weight', event.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium text-gray-700">分摊比例</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.1}
-                      value={member.split}
-                      onChange={(event) => updateMember(member.id, 'split', event.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeMember(member.id)}
-                  className="flex items-center gap-1 text-sm font-semibold text-rose-600 hover:text-rose-700"
-                  disabled={members.length === 1}
-                >
-                  <XMarkIcon className="h-4 w-4" /> 移除
-                </button>
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-gray-700">个人偏好 / 禁忌 / 想尝试的菜</label>
-                <textarea
-                  rows={2}
-                  value={member.preference}
-                  onChange={(event) => updateMember(member.id, 'preference', event.target.value)}
-                  placeholder="例如：不吃辣，偏爱鱼类"
-                  className="w-full rounded-lg border border-dashed border-indigo-300 bg-white px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={addMember}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
-          >
-            <PlusIcon className="h-4 w-4" /> 添加自定义成员
-          </button>
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white shadow hover:bg-indigo-700 disabled:bg-indigo-300"
-          >
-            {isGenerating ? <ArrowPathIcon className="h-5 w-5 animate-spin" /> : null}
-            {isGenerating ? '生成中…' : '生成小组菜单'}
-          </button>
-          {error && <span className="text-sm text-rose-600">{error}</span>}
-        </div>
-        {plan && (
-          <div className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-            <div>
-              <h3 className="text-xl font-semibold text-indigo-900">推荐菜单</h3>
-              <p className="mt-1 text-sm text-indigo-800">{plan.summary}</p>
-            </div>
-            <ul className="space-y-2">
-              {plan.dishes.map((dish, index) => (
-                <li key={`${dish.name}-${index}`} className="rounded-lg bg-white/70 p-3 text-sm text-indigo-900 shadow-sm">
-                  <p className="font-semibold">{dish.name}</p>
-                  <p className="mt-1 text-indigo-800">{dish.description}</p>
-                  {typeof dish.estimatedPrice === 'number' && (
-                    <p className="mt-1 text-xs text-indigo-700">预估价格：{formatCurrency(dish.estimatedPrice)}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {plan.tips && <p className="text-sm text-indigo-800">提示：{plan.tips}</p>}
-          </div>
-        )}
-      </section>
+      <GroupMealMode
+        members={members}
+        onMemberChange={handleMemberChange}
+        onAddMember={handleAddMember}
+        onRemoveMember={handleRemoveMember}
+        onGenerateMenu={handleGenerateMenu}
+        isGenerating={isGenerating}
+        error={error}
+        plan={plan}
+      />
 
       <section className="space-y-6 rounded-2xl bg-white p-6 shadow-lg">
-        <MealRecordForm initialParticipants={lastMemberNames} onSave={onSaveGroupMeal} history={groupMeals} />
+        <MealRecordForm members={members} onSave={onSaveGroupMeal} history={groupMeals} />
       </section>
     </div>
   );
