@@ -454,12 +454,8 @@ const App: React.FC = () => {
       case 'group':
         return (
           <GroupRecommender
-            allUsers={allUsers}
-            dishes={dishes}
-            currentUser={profile}
             onSaveGroupMeal={handleSaveGroupMeal}
             groupMeals={groupMeals}
-            incrementTimeSaved={incrementTimeSaved}
           />
         );
       case 'history':

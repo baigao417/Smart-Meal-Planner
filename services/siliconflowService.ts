@@ -1,4 +1,4 @@
-import { Dish, Macros, UserProfile } from '../types';
+import { Dish, GroupMenuPlan, Macros, UserProfile } from '../types';
 
 type VisionContentPart =
   | string
@@ -238,6 +238,131 @@ class SiliconFlowService {
     } catch (error) {
       console.error('Failed to generate recommendation text:', error);
       return '这份餐单营养均衡、执行难度低，能帮你节省选餐时间，把精力留给更重要的目标。';
+    }
+  }
+
+  async generateGroupMenuPlan(
+    members: { name: string; weight: number; split: number; preference: string }[]
+  ): Promise<GroupMenuPlan> {
+    if (members.length === 0) {
+      return {
+        summary: '请至少添加一位成员以生成聚餐菜单。',
+        dishes: [],
+      };
+    }
+
+    const payload = { group: members };
+    const toNumber = (value: unknown): number | undefined => {
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : undefined;
+      }
+      if (typeof value === 'string') {
+        const numeric = parseFloat(value);
+        return Number.isFinite(numeric) ? numeric : undefined;
+      }
+      return undefined;
+    };
+
+    try {
+      const content = await this.requestContent({
+        temperature: 0.5,
+        maxTokens: 600,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是一名聚餐规划助手。根据提供的成员权重、分摊比例和偏好，输出一个JSON格式的聚餐菜单，包含简短总结、菜品清单和可选贴士。',
+          },
+          {
+            role: 'user',
+            content: JSON.stringify(payload, null, 2),
+          },
+        ],
+        responseFormat: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'group_menu_plan',
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                summary: { type: 'string' },
+                tips: { type: 'string' },
+                dishes: {
+                  type: 'array',
+                  minItems: 1,
+                  items: {
+                    type: 'object',
+                    additionalProperties: true,
+                    properties: {
+                      name: { type: 'string' },
+                      description: { type: 'string' },
+                      estimatedPrice: { type: 'number' },
+                      estimated_price: { type: 'number' },
+                      reason: { type: 'string' },
+                      dish: { type: 'string' },
+                    },
+                    required: ['name', 'description'],
+                  },
+                },
+              },
+              required: ['summary', 'dishes'],
+            },
+          },
+        },
+      });
+
+      const parsed = this.parseJsonResponse<{
+        summary?: string;
+        dishes?: Array<{
+          name?: string;
+          dish?: string;
+          description?: string;
+          reason?: string;
+          estimatedPrice?: number;
+          estimated_price?: number;
+          price?: number;
+        }>;
+        tips?: string;
+      }>(content);
+
+      const dishes = Array.isArray(parsed.dishes)
+        ? parsed.dishes
+            .map((item) => {
+              const name = (item.name || item.dish || '').trim();
+              const description = (item.description || item.reason || '').trim();
+              if (!name || !description) {
+                return null;
+              }
+              const estimatedPrice =
+                toNumber(item.estimatedPrice) ?? toNumber(item.estimated_price) ?? toNumber(item.price);
+              return {
+                name,
+                description,
+                estimatedPrice: estimatedPrice !== undefined ? Number(estimatedPrice.toFixed(2)) : undefined,
+              };
+            })
+            .filter((dish): dish is GroupMenuPlan['dishes'][number] => Boolean(dish))
+        : [];
+
+      if (!dishes.length) {
+        throw new Error('AI 响应缺少菜品信息。');
+      }
+
+      return {
+        summary: parsed.summary?.trim() || '这份菜单根据成员偏好生成，可作为聚餐决策的起点。',
+        dishes,
+        tips: parsed.tips?.trim(),
+      };
+    } catch (error) {
+      console.error('Failed to generate group menu plan:', error);
+      return {
+        summary: '以下菜单结合了成员偏好，可在实际点餐时按需调整。',
+        dishes: members.map((member, index) => ({
+          name: `${member.name || '成员'}偏好菜品 ${index + 1}`,
+          description: member.preference || '根据该成员的备注挑选一款口碑菜品。',
+        })),
+      };
     }
   }
 

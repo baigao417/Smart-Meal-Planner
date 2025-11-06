@@ -50,17 +50,6 @@ export interface MealRecommendation {
   warnings: string[];
 }
 
-export interface GroupParticipant {
-    id: string;
-    userId?: string;
-    name: string;
-    weight: number; // Weight for recommendation algorithm
-    customPreferences?: string;
-    shareRatio?: number;
-    personalScore?: number;
-    notes?: string;
-}
-
 export interface SyncedUserData {
   profile: UserProfile | null;
   dishes: Dish[];
@@ -79,20 +68,36 @@ export interface CloudSyncStatus {
   hint?: string;
 }
 
-export interface GroupMealParticipantRecord {
+export interface GroupMemberInput {
   id: string;
-  groupMealId: string;
-  userId?: string;
   name: string;
-  shareRatio: number;
-  personalScore?: number;
-  notes?: string;
+  weight: number;
+  split: number;
+  preference: string;
 }
 
-export interface SharedDishInfo {
+export interface GroupMenuPlanDish {
   name: string;
-  calories?: number;
-  shareRatio?: number;
+  description: string;
+  estimatedPrice?: number;
+}
+
+export interface GroupMenuPlan {
+  summary: string;
+  dishes: GroupMenuPlanDish[];
+  tips?: string;
+}
+
+export interface GroupMealRecordParticipant {
+  name: string;
+  score: number;
+  comment?: string;
+}
+
+export interface GroupMealRecordMenuItem {
+  dish: string;
+  price: number;
+  rating: number;
 }
 
 export interface GroupMealRecord {
@@ -100,10 +105,10 @@ export interface GroupMealRecord {
   date: string;
   restaurant: string;
   totalPrice: number;
-  sharedDishes: SharedDishInfo[];
-  totalScore?: number;
-  createdBy: string;
-  participants: GroupMealParticipantRecord[];
+  participants: GroupMealRecordParticipant[];
+  menuItems: GroupMealRecordMenuItem[];
+  overallFeeling: string;
+  averageScore: number;
   notes?: string;
 }
 
